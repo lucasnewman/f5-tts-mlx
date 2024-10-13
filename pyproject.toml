@@ -1,18 +1,21 @@
 [build-system]
 requires = [
     "einops",
+    "einx",
     "jieba",
     "huggingface_hub",
     "mlx",
     "numpy",
     "setuptools",
+    "torch",
+    "torchaudio",
     "vocos-mlx"
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "f5-tts-mlx"
-version = "0.0.1"
+version = "0.0.2"
 authors = [{name = "Lucas Newman", email = "lucasnewman@me.com"}]
 license = {text = "MIT"}
 description = "F5-TTS - MLX"
@@ -40,3 +43,6 @@ Homepage = "https://github.com/lucasnewman/f5-tts-mlx"
 
 [tool.setuptools]
 packages = ["f5_tts_mlx"]
+
+[tool.setuptools.package-data]
+f5_tts_mlx = ["data/**/*.txt", "assets/mel_filters.npz"]

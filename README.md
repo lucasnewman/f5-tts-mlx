@@ -24,25 +24,12 @@ Pretrained model weights are available [on Hugging Face](https://huggingface.co/
 import mlx.core as mx
 
 from f5-tts-mlx.cfm import CFM
-from f5-tts-mlx.dit import DiT
 
 vocab = ...
-f5tts = CFM(
-    transformer = DiT(
-        dim = 1024,
-        depth = 22,
-        heads = 16,
-        ff_mult = 2,
-        text_dim = 512,
-        conv_layers = 4,
-        text_num_embeds = ...
-    ),
-    vocab_char_map=vocab
-)
-mx.eval(f5tts.parameters())
+f5tts = CFM.from_pretrained("lucasnewman/f5-tts-mlx", vocab)
 ```
 
-See `test_infer_single.py` for an example of generation.
+See `examples/generate.py` for an example of generation.
 
 ## Appreciation
 

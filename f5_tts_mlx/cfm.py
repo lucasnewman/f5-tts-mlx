@@ -8,6 +8,7 @@ d - dimension
 """
 
 from __future__ import annotations
+from pathlib import Path
 from random import random
 from typing import Callable
 
@@ -17,7 +18,20 @@ import mlx.nn as nn
 from einops.array_api import rearrange, reduce, repeat
 import einx
 
+from f5_tts_mlx.dit import DiT
 from f5_tts_mlx.modules import MelSpec
+
+from huggingface_hub import snapshot_download
+
+
+def fetch_from_hub(hf_repo: str) -> Path:
+    model_path = Path(
+        snapshot_download(
+            repo_id=hf_repo,
+            allow_patterns=["*.safetensors"],
+        )
+    )
+    return model_path / "model.safetensors"
 
 
 def exists(v):
@@ -431,3 +445,72 @@ class CFM(nn.Module):
         mx.eval(out)
 
         return out, trajectory
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        hf_model_name_or_path: str,
+        vocab_char_map: dict[str, int],
+    ) -> CFM:
+        path = fetch_from_hub(hf_model_name_or_path)
+        print(path)
+        
+        if path is None:
+            raise ValueError(f"Could not find model {hf_model_name_or_path}")
+
+        f5tts = CFM(
+            transformer=DiT(
+                dim=1024,
+                depth=22,
+                heads=16,
+                ff_mult=2,
+                text_dim=512,
+                conv_layers=4,
+                text_num_embeds=len(vocab_char_map) - 1,
+            ),
+            vocab_char_map=vocab_char_map,
+        )
+        
+        weights = mx.load(path.as_posix(), format="safetensors")
+        f5tts.load_weights(list(weights.items()))
+        
+        # state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)["ema_model_state_dict"]
+
+        # # load weights
+
+        # new_state_dict = {}
+        # for k, v in state_dict.items():
+        #     k = k.replace("ema_model.", "")
+        #     v = mx.array(v.numpy())
+
+        #     # rename layers
+        #     if len(k) < 1 or "mel_spec." in k or k in ("initted", "step"):
+        #         continue
+        #     elif ".to_out" in k:
+        #         k = k.replace(".to_out", ".to_out.layers")
+        #     elif ".text_blocks" in k:
+        #         k = k.replace(".text_blocks", ".text_blocks.layers")
+        #     elif ".ff.ff.0.0" in k:
+        #         k = k.replace(".ff.ff.0.0", ".ff.ff.layers.0.layers.0")
+        #     elif ".ff.ff.2" in k:
+        #         k = k.replace(".ff.ff.2", ".ff.ff.layers.2")
+        #     elif ".time_mlp" in k:
+        #         k = k.replace(".time_mlp", ".time_mlp.layers")
+        #     elif ".conv1d" in k:
+        #         k = k.replace(".conv1d", ".conv1d.layers")
+
+        #     # reshape weights
+        #     if ".dwconv.weight" in k:
+        #         v = v.swapaxes(1, 2)
+        #     elif ".conv1d.layers.0.weight" in k:
+        #         v = v.swapaxes(1, 2)
+        #     elif ".conv1d.layers.2.weight" in k:
+        #         v = v.swapaxes(1, 2)
+
+        #     new_state_dict[k] = v
+
+        # f5tts.load_weights(list(new_state_dict.items()))
+        
+        mx.eval(f5tts.parameters())
+        
+        return f5tts
