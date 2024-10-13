@@ -1,7 +1,7 @@
 import argparse
 import datetime
-
 from pathlib import Path
+from typing import Optional
 
 import mlx.core as mx
 
@@ -29,6 +29,7 @@ def generate(
     ref_audio_path: str = "tests/test_en_1_ref_short.wav",
     ref_audio_text: str = "Some call me nature, others call me mother nature.",
     sway_sampling_coef: float = 0.0,
+    seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
     vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
@@ -60,7 +61,7 @@ def generate(
         steps=32,
         cfg_strength=1,
         sway_sampling_coef=sway_sampling_coef,
-        seed=1234,
+        seed=seed,
         vocoder=vocos.decode,
     )
 
@@ -125,6 +126,13 @@ if __name__ == "__main__":
         default="0.0",
         help="Coefficient for sway sampling",
     )
+    
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Seed for noise generation",
+    )
 
     args = parser.parse_args()
 
@@ -136,5 +144,6 @@ if __name__ == "__main__":
         ref_audio_path=args.ref_audio,
         ref_audio_text=args.ref_text,
         sway_sampling_coef=args.sway_coef,
+        seed=args.seed,
         output_path=args.output,
     )
