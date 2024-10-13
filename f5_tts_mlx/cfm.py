@@ -473,44 +473,6 @@ class CFM(nn.Module):
         
         weights = mx.load(path.as_posix(), format="safetensors")
         f5tts.load_weights(list(weights.items()))
-        
-        # state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True)["ema_model_state_dict"]
-
-        # # load weights
-
-        # new_state_dict = {}
-        # for k, v in state_dict.items():
-        #     k = k.replace("ema_model.", "")
-        #     v = mx.array(v.numpy())
-
-        #     # rename layers
-        #     if len(k) < 1 or "mel_spec." in k or k in ("initted", "step"):
-        #         continue
-        #     elif ".to_out" in k:
-        #         k = k.replace(".to_out", ".to_out.layers")
-        #     elif ".text_blocks" in k:
-        #         k = k.replace(".text_blocks", ".text_blocks.layers")
-        #     elif ".ff.ff.0.0" in k:
-        #         k = k.replace(".ff.ff.0.0", ".ff.ff.layers.0.layers.0")
-        #     elif ".ff.ff.2" in k:
-        #         k = k.replace(".ff.ff.2", ".ff.ff.layers.2")
-        #     elif ".time_mlp" in k:
-        #         k = k.replace(".time_mlp", ".time_mlp.layers")
-        #     elif ".conv1d" in k:
-        #         k = k.replace(".conv1d", ".conv1d.layers")
-
-        #     # reshape weights
-        #     if ".dwconv.weight" in k:
-        #         v = v.swapaxes(1, 2)
-        #     elif ".conv1d.layers.0.weight" in k:
-        #         v = v.swapaxes(1, 2)
-        #     elif ".conv1d.layers.2.weight" in k:
-        #         v = v.swapaxes(1, 2)
-
-        #     new_state_dict[k] = v
-
-        # f5tts.load_weights(list(new_state_dict.items()))
-        
         mx.eval(f5tts.parameters())
         
         return f5tts
