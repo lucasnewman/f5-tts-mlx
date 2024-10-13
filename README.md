@@ -16,7 +16,9 @@ F5 is an evolution of [E2 TTS](https://arxiv.org/abs/2406.18009v2) and improves 
 pip install f5-tts-mlx
 ```
 
-Pretrained model weights are available [on Hugging Face](https://huggingface.co/SWivid/F5-TTS).
+Pretrained model weights are available [on Hugging Face](https://huggingface.co/lucasnewman/f5-tts-mlx).
+
+You'll also need a vocabulary (see the `data` folder) and mel filterbanks (see the `assets` folder) to preprocess the text & audio before generating speech.
 
 ## Usage
 
