@@ -22,6 +22,10 @@ You'll also need a vocabulary (see the `data` folder) and mel filterbanks (see t
 
 ## Usage
 
+See `examples/generate.py` for an example of generation.
+
+You can load a pretrained model from Python like this:
+
 ```python
 import mlx.core as mx
 
@@ -29,9 +33,8 @@ from f5_tts_mlx.cfm import CFM
 
 vocab = ...
 f5tts = CFM.from_pretrained("lucasnewman/f5-tts-mlx", vocab)
+audio = f5tts.sample(...)
 ```
-
-See `examples/generate.py` for an example of generation.
 
 ## Appreciation
 
