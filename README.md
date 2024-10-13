@@ -23,7 +23,7 @@ Pretrained model weights are available [on Hugging Face](https://huggingface.co/
 ```python
 import mlx.core as mx
 
-from f5-tts-mlx.cfm import CFM
+from f5_tts_mlx.cfm import CFM
 
 vocab = ...
 f5tts = CFM.from_pretrained("lucasnewman/f5-tts-mlx", vocab)
