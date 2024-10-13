@@ -20,6 +20,8 @@ Pretrained model weights are available [on Hugging Face](https://huggingface.co/
 
 You'll also need a vocabulary (see the `data` folder) and mel filterbanks (see the `assets` folder) to preprocess the text & audio before generating speech.
 
+MAKE SURE TO HAVE FFMPEG INSTALLED
+
 ## Usage
 
 See `examples/generate.py` for an example of generation.
