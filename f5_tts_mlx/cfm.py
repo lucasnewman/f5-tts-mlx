@@ -9,6 +9,7 @@ d - dimension
 
 from __future__ import annotations
 from random import random
+from typing import Callable
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -425,7 +426,8 @@ class CFM(nn.Module):
         out = mx.where(cond_mask, cond, out)
 
         if exists(vocoder):
-            out = rearrange(out, "b n d -> b d n")
             out = vocoder(out)
+            
+        mx.eval(out)
 
         return out, trajectory

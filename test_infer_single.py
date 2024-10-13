@@ -14,6 +14,10 @@ import torchaudio
 
 from vocos_mlx import Vocos
 
+SAMPLE_RATE = 24_000
+HOP_LENGTH = 256
+FRAMES_PER_SEC = SAMPLE_RATE / HOP_LENGTH
+
 vocab_path = Path("data/Emilia_ZH_EN_pinyin/vocab.txt")
 vocab = {v: i for i, v in enumerate(vocab_path.read_text().split("\n"))}
 
@@ -80,20 +84,17 @@ if rms < target_rms:
     audio = audio * target_rms / rms
 
 ref_text = "Some call me nature, others call me mother nature."
-gen_text = "I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring. Respect me and I'll nurture you; ignore me and you shall face the consequences."
+gen_text = "M L X is an array framework designed for efficient and flexible machine learning on Apple silicon."
 text = [ref_text + " " + gen_text]
 text = convert_char_to_pinyin(text)
 
-sample_rate = 24_000
-hop_length = 256
-frames_per_second = sample_rate * hop_length
-
-duration = int(27 * frames_per_second)
-print(f"Generating {duration} seconds of audio...")
+duration = int(11 * FRAMES_PER_SEC)
+print(f"Generating {duration} frames of audio...")
 
 start_date = datetime.datetime.now()
+vocos = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
 
-mel, _ = f5tts.sample(
+wave, _ = f5tts.sample(
     audio,
     text=text,
     duration=duration,
@@ -101,9 +102,10 @@ mel, _ = f5tts.sample(
     cfg_strength=1,
     sway_sampling_coef=None,
     seed=1234,
+    vocoder=vocos.decode
 )
+wave = wave[audio.shape[1]:]
 
-vocos = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
-wave = vocos.decode(mel)
+print(f"Generated {len(wave) / SAMPLE_RATE:.2f} seconds of audio in {datetime.datetime.now() - start_date}.")
 
 torchaudio.save("tests/output.wav", torch.Tensor(np.array(wave)).unsqueeze(0), 24000)
