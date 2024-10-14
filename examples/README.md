@@ -53,7 +53,7 @@ Specify the output path where the generated audio will be saved. If not specifie
 
 float, default: 0.0
 
-Set the sway sampling coefficient. The best values according to the paper are in the range on [-0.4...0.4].
+Set the sway sampling coefficient. The best values according to the paper are in the range of [-0.4...0.4].
 
 
 `-–seed`
