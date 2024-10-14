@@ -1,20 +1,12 @@
 [build-system]
 requires = [
-    "einops",
-    "einx",
-    "jieba",
-    "huggingface_hub",
-    "mlx",
-    "numpy",
-    "setuptools",
-    "soundfile",
-    "vocos-mlx"
+    "setuptools"
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "f5-tts-mlx"
-version = "0.0.3"
+version = "0.0.4"
 authors = [{name = "Lucas Newman", email = "lucasnewman@me.com"}]
 license = {text = "MIT"}
 description = "F5-TTS - MLX"
@@ -35,7 +27,17 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
 ]
 requires-python = ">=3.9"
-dependencies = ['setuptools; python_version>="3.9"']
+dependencies = [
+    "einops",
+    "einx",
+    "jieba",
+    "huggingface_hub",
+    "mlx",
+    "numpy",
+    "setuptools",
+    "soundfile",
+    "vocos-mlx"
+]
 
 [project.urls]
 Homepage = "https://github.com/lucasnewman/f5-tts-mlx"
