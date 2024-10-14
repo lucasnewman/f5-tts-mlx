@@ -152,7 +152,7 @@ def list_str_to_idx(
 # conditional flow matching
 
 
-class CFM(nn.Module):
+class F5TTS(nn.Module):
     def __init__(
         self,
         transformer: nn.Module,
@@ -450,7 +450,7 @@ class CFM(nn.Module):
     def from_pretrained(
         cls,
         hf_model_name_or_path: str
-    ) -> CFM:
+    ) -> F5TTS:
         path = fetch_from_hub(hf_model_name_or_path)
         
         if path is None:
@@ -460,7 +460,7 @@ class CFM(nn.Module):
         vocab_path = path / "vocab.txt"
         vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
         
-        f5tts = CFM(
+        f5tts = F5TTS(
             transformer=DiT(
                 dim=1024,
                 depth=22,

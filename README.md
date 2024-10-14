@@ -16,20 +16,29 @@ F5 is an evolution of [E2 TTS](https://arxiv.org/abs/2406.18009v2) and improves 
 pip install f5-tts-mlx
 ```
 
-Pretrained model weights are available [on Hugging Face](https://huggingface.co/lucasnewman/f5-tts-mlx).
-
 ## Usage
 
-See [examples/generate.py](./examples) for an example of generation.
+```bash
+python -m f5_tts_mlx.generate \
+--text "The quick brown fox jumped over the lazy dog." \
+--duration 3.5
+```
+
+See [examples/generate.py](./examples) for more options.
+
+—
 
 You can load a pretrained model from Python like this:
 
 ```python
-from f5_tts_mlx.cfm import CFM
+from f5_tts_mlx import F5TTS
 
-f5tts = CFM.from_pretrained("lucasnewman/f5-tts-mlx")
+f5tts = F5TTS.from_pretrained("lucasnewman/f5-tts-mlx")
+
 audio = f5tts.sample(...)
 ```
+
+Pretrained model weights are also available [on Hugging Face](https://huggingface.co/lucasnewman/f5-tts-mlx).
 
 ## Appreciation
 
