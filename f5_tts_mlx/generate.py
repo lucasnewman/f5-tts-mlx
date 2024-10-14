@@ -47,6 +47,8 @@ def generate(
     else:
         # load reference audio
         audio, sr = sf.read(ref_audio_path)
+        if sr != SAMPLE_RATE:
+            raise ValueError("Reference audio must have a sample rate of 24kHz")
 
     audio = mx.array(audio)
     ref_audio_duration = audio.shape[0] / SAMPLE_RATE
