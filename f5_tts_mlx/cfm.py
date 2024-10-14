@@ -28,10 +28,10 @@ def fetch_from_hub(hf_repo: str) -> Path:
     model_path = Path(
         snapshot_download(
             repo_id=hf_repo,
-            allow_patterns=["*.safetensors"],
+            allow_patterns=["*.safetensors", "*.txt"],
         )
     )
-    return model_path / "model.safetensors"
+    return model_path
 
 
 def exists(v):
@@ -449,15 +449,17 @@ class CFM(nn.Module):
     @classmethod
     def from_pretrained(
         cls,
-        hf_model_name_or_path: str,
-        vocab_char_map: dict[str, int],
+        hf_model_name_or_path: str
     ) -> CFM:
         path = fetch_from_hub(hf_model_name_or_path)
-        print(path)
         
         if path is None:
             raise ValueError(f"Could not find model {hf_model_name_or_path}")
 
+        model_path = path / "model.safetensors"
+        vocab_path = path / "vocab.txt"
+        vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
+        
         f5tts = CFM(
             transformer=DiT(
                 dim=1024,
@@ -466,12 +468,12 @@ class CFM(nn.Module):
                 ff_mult=2,
                 text_dim=512,
                 conv_layers=4,
-                text_num_embeds=len(vocab_char_map) - 1,
+                text_num_embeds=len(vocab) - 1,
             ),
-            vocab_char_map=vocab_char_map,
+            vocab_char_map=vocab,
         )
         
-        weights = mx.load(path.as_posix(), format="safetensors")
+        weights = mx.load(model_path.as_posix(), format="safetensors")
         f5tts.load_weights(list(weights.items()))
         mx.eval(f5tts.parameters())
         

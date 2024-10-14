@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "f5-tts-mlx"
-version = "0.0.4"
+version = "0.0.5"
 authors = [{name = "Lucas Newman", email = "lucasnewman@me.com"}]
 license = {text = "MIT"}
 description = "F5-TTS - MLX"
@@ -46,4 +46,4 @@ Homepage = "https://github.com/lucasnewman/f5-tts-mlx"
 packages = ["f5_tts_mlx"]
 
 [tool.setuptools.package-data]
-f5_tts_mlx = ["data/**/*.txt", "assets/mel_filters.npz"]
+f5_tts_mlx = ["assets/mel_filters.npz"]

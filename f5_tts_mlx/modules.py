@@ -1,7 +1,9 @@
 from __future__ import annotations
 from functools import lru_cache
+import io
 import math
 import os
+import pkgutil
 from typing import Union
 
 import mlx.core as mx
@@ -125,7 +127,14 @@ def mel_filters(n_mels: int) -> mx.array:
     Saved using extract_filterbank.py
     """
     assert n_mels in {100}, f"Unsupported n_mels: {n_mels}"
+    
+    # try to pull the filterbank from the package
+    data = pkgutil.get_data('f5_tts_mlx', 'assets/mel_filters.npz')
+    if data is not None:
+        npzfile = np.load(io.BytesIO(data))
+        return mx.array(npzfile[f"mel_{n_mels}"])
 
+    # otherwise load it from disk
     filename = os.path.join("assets", "mel_filters.npz")
     return mx.load(filename, format="npz")[f"mel_{n_mels}"]
 

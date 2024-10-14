@@ -1,6 +1,5 @@
 import argparse
 import datetime
-from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
@@ -24,16 +23,13 @@ def generate(
     generation_text: str,
     duration: float,
     model_name: str = "lucasnewman/f5-tts-mlx",
-    vocab_path: str = "data/Emilia_ZH_EN_pinyin/vocab.txt",
     ref_audio_path: str = "tests/test_en_1_ref_short.wav",
     ref_audio_text: str = "Some call me nature, others call me mother nature.",
     sway_sampling_coef: float = 0.0,
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
-    vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
-
-    f5tts = CFM.from_pretrained(model_name, vocab)
+    f5tts = CFM.from_pretrained(model_name)
 
     # load reference audio
     audio, sr = sf.read(ref_audio_path)
@@ -95,12 +91,6 @@ if __name__ == "__main__":
         help="Duration of the generated audio in seconds",
     )
     parser.add_argument(
-        "--vocab",
-        type=str,
-        default="data/Emilia_ZH_EN_pinyin/vocab.txt",
-        help="Path to the vocab file",
-    )
-    parser.add_argument(
         "--ref-audio",
         type=str,
         default="tests/test_en_1_ref_short.wav",
@@ -139,7 +129,6 @@ if __name__ == "__main__":
         generation_text=args.text,
         duration=args.duration,
         model_name=args.model,
-        vocab_path=args.vocab,
         ref_audio_path=args.ref_audio,
         ref_audio_text=args.ref_text,
         sway_sampling_coef=args.sway_coef,
