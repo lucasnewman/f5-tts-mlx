@@ -20,7 +20,7 @@ Pretrained model weights are available [on Hugging Face](https://huggingface.co/
 
 ## Usage
 
-See `examples/generate.py` for an example of generation.
+See [examples/generate.py](./examples) for an example of generation.
 
 You can load a pretrained model from Python like this:
 
