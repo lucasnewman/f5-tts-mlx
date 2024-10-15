@@ -15,13 +15,21 @@ string
 
 Provide the text that you want to generate.
 
+## Optional Parameters
+
 `-–duration`
 
 float
 
 Specify the length of the generated audio in seconds.
 
-## Optional Parameters
+
+`-–speed`
+
+float, default: 1.0
+
+Speaking speed modifier, used when an exact duration is not specified.
+
 
 `--model`
 
@@ -29,11 +37,13 @@ string, default: "lucasnewman/f5-tts-mlx"
 
 Specify a custom model to use for generation. If not provided, the script will use the default model.
 
+
 `--ref-audio`
 
 string, default: "tests/test_en_1_ref_short.wav"
 
 Provide a reference audio file path to help guide the generation.
+
 
 `–-ref-text`
 
