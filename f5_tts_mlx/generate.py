@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import pkgutil
+import re
 from typing import Optional
 
 import mlx.core as mx
@@ -22,12 +23,13 @@ TARGET_RMS = 0.1
 
 def generate(
     generation_text: str,
-    duration: float,
+    duration: Optional[float] = None,
     model_name: str = "lucasnewman/f5-tts-mlx",
     ref_audio_path: Optional[str] = None,
     ref_audio_text: Optional[str] = None,
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
+    speed: float = 1.0, # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
@@ -52,6 +54,7 @@ def generate(
 
     audio = mx.array(audio)
     ref_audio_duration = audio.shape[0] / SAMPLE_RATE
+    print(f"Got reference audio with duration: {ref_audio_duration:.2f} seconds")
 
     rms = mx.sqrt(mx.mean(mx.square(audio)))
     if rms < TARGET_RMS:
@@ -59,6 +62,16 @@ def generate(
 
     # generate the audio for the given text
     text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
+    
+    # use a heuristic to determine the duration if not provided
+    if duration is None:
+        ref_audio_len = audio.shape[0] // HOP_LENGTH
+        zh_pause_punc = r"。，、；：？！"
+        ref_text_len = len(ref_audio_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, ref_audio_text))
+        gen_text_len = len(generation_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, generation_text))
+        duration_in_frames = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
+        duration = (duration_in_frames / FRAMES_PER_SEC) - ref_audio_duration
+        print(f"Using duration of {duration:.2f} seconds for generated speech.")
 
     frame_duration = int((ref_audio_duration + duration) * FRAMES_PER_SEC)
     print(f"Generating {frame_duration} total frames of audio...")
@@ -104,7 +117,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--duration",
         type=float,
-        required=True,
+        default=None,
         help="Duration of the generated audio in seconds",
     )
     parser.add_argument(
@@ -138,6 +151,12 @@ if __name__ == "__main__":
         help="Coefficient for sway sampling",
     )
     parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Speed factor for the duration heuristic",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -154,6 +173,7 @@ if __name__ == "__main__":
         ref_audio_text=args.ref_text,
         cfg_strength=args.cfg,
         sway_sampling_coef=args.sway_coef,
+        speed=args.speed,
         seed=args.seed,
         output_path=args.output,
     )

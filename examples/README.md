@@ -4,7 +4,7 @@
 To run the script, use the following format:
 
 ```bash
-python generate.py --text "Your input text here" --duration 10
+python generate.py --text "Your input text here"
 ```
 
 ## Required Parameters

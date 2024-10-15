@@ -20,8 +20,7 @@ pip install f5-tts-mlx
 
 ```bash
 python -m f5_tts_mlx.generate \
---text "The quick brown fox jumped over the lazy dog." \
---duration 3.5
+--text "The quick brown fox jumped over the lazy dog."
 ```
 
 See [examples/generate.py](./examples) for more options.
