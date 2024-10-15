@@ -138,14 +138,16 @@ def list_str_to_tensor(text: list[str], padding_value=-1) -> mx.array:  # Int['b
 
 
 def list_str_to_idx(
-    text: list[str] | list[list[str]],
+    text: list[str],
     vocab_char_map: dict[str, int],  # {char: idx}
     padding_value=-1,
 ) -> mx.array:  # Int['b nt']:
     list_idx_tensors = [
         [vocab_char_map.get(c, 0) for c in t] for t in text
     ]  # pinyin or char style
-    text = pad_sequence(mx.array(list_idx_tensors), padding_value=-1)
+    
+    list_idx_tensors = [mx.array(t) for t in list_idx_tensors]
+    text = pad_sequence(list_idx_tensors, padding_value=padding_value)
     return text
 
 

@@ -1,12 +1,9 @@
 from __future__ import annotations
-from pathlib import Path
-from random import random
-from typing import Callable
 
 import mlx.core as mx
 import mlx.nn as nn
 
-from einops.array_api import rearrange, reduce, repeat
+from einops.array_api import rearrange, repeat
 import einx
 
 from f5_tts_mlx.cfm import (
@@ -15,13 +12,13 @@ from f5_tts_mlx.cfm import (
     lens_to_mask,
     maybe_masked_mean,
 )
-from f5_tts_mlx.dit import DiT, TextEmbedding, TimestepEmbedding, ConvPositionEmbedding
+from f5_tts_mlx.dit import DiT, TextEmbedding, ConvPositionEmbedding
 
 from f5_tts_mlx.modules import (
+    Attention,
+    FeedForward,
     MelSpec,
-    RotaryEmbedding,
-    DiTBlock,
-    AdaLayerNormZero_Final,
+    RotaryEmbedding
 )
 
 SAMPLE_RATE = 24_000
@@ -60,7 +57,40 @@ class DurationInputEmbedding(nn.Module):
         x = self.proj(mx.concatenate((x, text_embed), axis=-1))
         x = self.conv_pos_embed(x) + x
         return x
+    
+class DurationTransformerBlock(nn.Module):
+    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.1):
+        super().__init__()
 
+        self.attn_norm = nn.RMSNorm(dim)
+        self.attn = Attention(
+            dim=dim,
+            heads=heads,
+            dim_head=dim_head,
+            dropout=dropout,
+        )
+
+        self.ff_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+        self.ff = FeedForward(
+            dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh"
+        )
+
+    def __call__(
+        self, x, mask=None, rope=None
+    ):  # x: noised input
+        norm = self.attn_norm(x)
+
+        # attention
+        attn_output = self.attn(x=norm, mask=mask, rope=rope)
+
+        # process attention output for input x
+        x = x * attn_output
+
+        norm = self.ff_norm(x)
+        ff_output = self.ff(norm)
+        x = x * ff_output
+
+        return x
 
 class DurationTransformer(nn.Module):
     def __init__(
@@ -75,12 +105,10 @@ class DurationTransformer(nn.Module):
         mel_dim=100,
         text_num_embeds=256,
         text_dim=None,
-        conv_layers=0,
-        long_skip_connection=False,
+        conv_layers=0
     ):
         super().__init__()
 
-        self.time_embed = TimestepEmbedding(dim)
         if text_dim is None:
             text_dim = mel_dim
         self.text_embed = TextEmbedding(
@@ -94,7 +122,7 @@ class DurationTransformer(nn.Module):
         self.depth = depth
 
         self.transformer_blocks = [
-            DiTBlock(
+            DurationTransformerBlock(
                 dim=dim,
                 heads=heads,
                 dim_head=dim_head,
@@ -103,9 +131,6 @@ class DurationTransformer(nn.Module):
             )
             for _ in range(depth)
         ]
-        self.long_skip_connection = (
-            nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
-        )
 
         self.norm_out = nn.RMSNorm(dim)  # final modulation
 
@@ -115,12 +140,7 @@ class DurationTransformer(nn.Module):
         text: int["b nt"],  # text
         mask: bool["b n"] | None = None,
     ):
-        batch, seq_len = x.shape[0], x.shape[1]
-        
-        time = mx.ones((batch,), dtype=mx.float32)
-
-        # t: conditioning time, c: context (text + masked cond audio), x: noised input audio
-        t = self.time_embed(time)
+        seq_len = x.shape[1]
         
         text_embed = self.text_embed(text, seq_len)
         
@@ -128,14 +148,8 @@ class DurationTransformer(nn.Module):
 
         rope = self.rotary_embed.forward_from_seq_len(seq_len)
 
-        if self.long_skip_connection is not None:
-            residual = x
-
         for block in self.transformer_blocks:
-            x = block(x, t, mask=mask, rope=rope)
-
-        if self.long_skip_connection is not None:
-            x = self.long_skip_connection(mx.concatenate((x, residual), axis=-1))
+            x = block(x, mask=mask, rope=rope)
 
         x = self.norm_out(x)
 
