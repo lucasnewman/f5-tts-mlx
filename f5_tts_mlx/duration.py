@@ -108,11 +108,11 @@ class DurationTransformer(nn.Module):
         mask: bool["b n"] | None = None,
     ):
         batch, seq_len = x.shape[0], x.shape[1]
-        
+
         t = self.time_embed(mx.ones((batch,), dtype=mx.float32))
-        
+
         text_embed = self.text_embed(text, seq_len)
-        
+
         x = self.input_embed(x, text_embed)
 
         rope = self.rotary_embed.forward_from_seq_len(seq_len)
@@ -128,7 +128,7 @@ class DurationTransformer(nn.Module):
 class DurationPredictor(nn.Module):
     def __init__(
         self,
-        transformer: DiT,
+        transformer: DurationTransformer,
         num_channels=None,
         mel_spec_kwargs: dict = dict(),
         vocab_char_map: dict[str, int] | None = None,
@@ -200,11 +200,11 @@ class DurationPredictor(nn.Module):
         inp = mx.where(
             repeat(mask, "b n -> b n d", d=self.num_channels), inp, mx.zeros_like(inp)
         )
-        
+
         x = self.transformer(inp, text=text)
 
         x = maybe_masked_mean(x, mask)
-        
+
         pred = self.to_pred(x)
 
         # return the prediction if not returning loss
@@ -217,3 +217,40 @@ class DurationPredictor(nn.Module):
         duration = lens.astype(mx.float32) / SAMPLES_PER_SECOND
 
         return nn.losses.mse_loss(pred, duration)
+
+    def sample(
+        self,
+        cond: mx.array["b n d"] | mx.array["b nw"],
+        text: mx.array["b nt"] | list[str],
+        *,
+        lens: mx.array["b"] | None = None,
+        max_duration=4096,
+    ) -> tuple[mx.array, mx.array]:
+        self.eval()
+
+        # raw wave
+
+        if cond.ndim == 2:
+            cond = rearrange(cond, "1 n -> n")
+            cond = self.mel_spec(cond)
+            assert cond.shape[-1] == self.num_channels
+
+        batch, cond_seq_len, dtype = *cond.shape[:2], cond.dtype
+        if not exists(lens):
+            lens = mx.full((batch,), cond_seq_len, dtype=dtype)
+
+        # text
+
+        if isinstance(text, list):
+            if exists(self.vocab_char_map):
+                text = list_str_to_idx(text, self.vocab_char_map)
+            else:
+                text = list_str_to_tensor(text)
+            assert text.shape[0] == batch
+
+        if exists(text):
+            text_lens = (text != -1).sum(axis=-1)
+            lens = mx.maximum(text_lens, lens)
+
+        pred = self.transformer(cond, text=text)
+        return mx.minimum(max_duration / SAMPLES_PER_SECOND, pred)
