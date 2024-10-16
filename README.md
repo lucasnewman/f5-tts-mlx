@@ -23,13 +23,19 @@ python -m f5_tts_mlx.generate \
 --text "The quick brown fox jumped over the lazy dog."
 ```
 
-If you want to use your own reference audio sample, make sure it's encoded at 24kHz and use the --ref-audio and --ref-text options:
+If you want to use your own reference audio sample, make sure it's a mono, 24kHz wav file of around 5-10 seconds:
 
 ```bash
 python -m f5_tts_mlx.generate \
 --text "The quick brown fox jumped over the lazy dog."
 --ref-audio /path/to/audio.wav
 --ref-text "This is the caption for the reference audio."
+```
+
+You can convert an audio file to the correct format with ffmpeg like this:
+
+```bash
+ffmpeg -i /path/to/audio.wav -ac 1 -ar 24000 -sample_fmt s16 -t 10 /path/to/output_audio.wav
 ```
 
 See [examples/generate.py](./examples) for more options.
