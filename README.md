@@ -19,8 +19,7 @@ pip install f5-tts-mlx
 ## Usage
 
 ```bash
-python -m f5_tts_mlx.generate \
---text "The quick brown fox jumped over the lazy dog."
+python -m f5_tts_mlx.generate --text "The quick brown fox jumped over the lazy dog."
 ```
 
 If you want to use your own reference audio sample, make sure it's a mono, 24kHz wav file of around 5-10 seconds:
