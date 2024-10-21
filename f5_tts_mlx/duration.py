@@ -1,3 +1,12 @@
+"""
+ein notation:
+b - batch
+n - sequence
+nt - text sequence
+nw - raw wave length
+d - dimension
+"""
+
 from __future__ import annotations
 
 import mlx.core as mx
@@ -6,31 +15,25 @@ import mlx.nn as nn
 from einops.array_api import rearrange, repeat
 import einx
 
-from f5_tts_mlx.cfm import (
-    list_str_to_idx,
-    list_str_to_tensor,
-    lens_to_mask,
-    maybe_masked_mean,
-)
-from f5_tts_mlx.dit import DiT, TextEmbedding, TimestepEmbedding, ConvPositionEmbedding
-
+from f5_tts_mlx.dit import TextEmbedding, TimestepEmbedding, ConvPositionEmbedding
 from f5_tts_mlx.modules import (
     MelSpec,
     RotaryEmbedding,
     DiTBlock,
 )
+from f5_tts_mlx.utils import (
+    exists,
+    default,
+    list_str_to_idx,
+    list_str_to_tensor,
+    lens_to_mask,
+    maybe_masked_mean,
+)
+
 
 SAMPLE_RATE = 24_000
 HOP_LENGTH = 256
 SAMPLES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
-
-
-def exists(v):
-    return v is not None
-
-
-def default(v, d):
-    return v if exists(v) else d
 
 
 class Rearrange(nn.Module):
@@ -217,40 +220,3 @@ class DurationPredictor(nn.Module):
         duration = lens.astype(mx.float32) / SAMPLES_PER_SECOND
 
         return nn.losses.mse_loss(pred, duration)
-
-    def sample(
-        self,
-        cond: mx.array["b n d"] | mx.array["b nw"],
-        text: mx.array["b nt"] | list[str],
-        *,
-        lens: mx.array["b"] | None = None,
-        max_duration=4096,
-    ) -> tuple[mx.array, mx.array]:
-        self.eval()
-
-        # raw wave
-
-        if cond.ndim == 2:
-            cond = rearrange(cond, "1 n -> n")
-            cond = self.mel_spec(cond)
-            assert cond.shape[-1] == self.num_channels
-
-        batch, cond_seq_len, dtype = *cond.shape[:2], cond.dtype
-        if not exists(lens):
-            lens = mx.full((batch,), cond_seq_len, dtype=dtype)
-
-        # text
-
-        if isinstance(text, list):
-            if exists(self.vocab_char_map):
-                text = list_str_to_idx(text, self.vocab_char_map)
-            else:
-                text = list_str_to_tensor(text)
-            assert text.shape[0] == batch
-
-        if exists(text):
-            text_lens = (text != -1).sum(axis=-1)
-            lens = mx.maximum(text_lens, lens)
-
-        pred = self.transformer(cond, text=text)
-        return mx.minimum(max_duration / SAMPLES_PER_SECOND, pred)

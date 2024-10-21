@@ -15,141 +15,21 @@ from typing import Callable
 import mlx.core as mx
 import mlx.nn as nn
 
-from einops.array_api import rearrange, reduce, repeat
-import einx
+from einops.array_api import rearrange, repeat
 
+from f5_tts_mlx.duration import DurationPredictor, DurationTransformer
 from f5_tts_mlx.dit import DiT
 from f5_tts_mlx.modules import MelSpec
-
-from huggingface_hub import snapshot_download
-
-
-def fetch_from_hub(hf_repo: str) -> Path:
-    model_path = Path(
-        snapshot_download(
-            repo_id=hf_repo,
-            allow_patterns=["*.safetensors", "*.txt"],
-        )
-    )
-    return model_path
-
-
-def exists(v):
-    return v is not None
-
-
-def default(v, d):
-    return v if exists(v) else d
-
-
-def divisible_by(num, den):
-    return (num % den) == 0
-
-
-def lens_to_mask(
-    t: mx.array,
-    length: int | None = None,
-) -> mx.array:  # Bool['b n']
-    if not exists(length):
-        length = t.max()
-
-    seq = mx.arange(length)
-    return einx.less("n, b -> b n", seq, t)
-
-
-def mask_from_start_end_indices(
-    seq_len: mx.array,
-    start: mx.array,
-    end: mx.array,
-    max_length: int | None = None,
-):
-    max_seq_len = default(max_length, seq_len.max().item())
-    seq = mx.arange(max_seq_len).astype(mx.int32)
-    return einx.greater_equal("n, b -> b n", seq, start) & einx.less(
-        "n, b -> b n", seq, end
-    )
-
-
-def mask_from_frac_lengths(
-    seq_len: mx.array,
-    frac_lengths: mx.array,
-    max_length: int | None = None,
-):
-    lengths = (frac_lengths * seq_len).astype(mx.int32)
-    max_start = seq_len - lengths
-
-    rand = mx.random.uniform(0, 1, frac_lengths.shape)
-
-    start = mx.maximum((max_start * rand).astype(mx.int32), 0)
-    end = start + lengths
-
-    out = mask_from_start_end_indices(seq_len, start, end, max_length)
-
-    if exists(max_length):
-        out = pad_to_length(out, max_length)
-
-    return out
-
-
-def maybe_masked_mean(t: mx.array, mask: mx.array | None = None) -> mx.array:
-    if not exists(mask):
-        return t.mean(dim=1)
-
-    t = einx.where("b n, b n d, -> b n d", mask, t, 0.0)
-    num = reduce(t, "b n d -> b d", "sum")
-    den = reduce(mask.astype(mx.int32), "b n -> b", "sum")
-
-    return einx.divide("b d, b -> b d", num, mx.maximum(den, 1))
-
-
-def pad_to_length(t: mx.array, length: int, value=None):
-    ndim = t.ndim
-    seq_len = t.shape[-1]
-    if length > seq_len:
-        if ndim == 1:
-            t = mx.pad(t, [(0, length - seq_len)], constant_values=value)
-        elif ndim == 2:
-            t = mx.pad(t, [(0, 0), (0, length - seq_len)], constant_values=value)
-        elif ndim == 3:
-            t = mx.pad(
-                t, [(0, 0), (0, length - seq_len), (0, 0)], constant_values=value
-            )
-        else:
-            raise ValueError(f"Unsupported padding dims: {ndim}")
-    return t[..., :length]
-
-
-def pad_sequence(t: mx.array, padding_value=0):
-    max_len = max([i.shape[-1] for i in t])
-    t = mx.array([pad_to_length(i, max_len, padding_value) for i in t])
-    return t
-
-
-# simple utf-8 tokenizer, since paper went character based
-
-
-def list_str_to_tensor(text: list[str], padding_value=-1) -> mx.array:  # Int['b nt']:
-    list_tensors = [mx.array([*bytes(t, "UTF-8")]) for t in text]
-    padded_tensor = pad_sequence(list_tensors, padding_value=-1)
-    return padded_tensor
-
-
-# char tokenizer, based on custom dataset's extracted .txt file
-
-
-def list_str_to_idx(
-    text: list[str],
-    vocab_char_map: dict[str, int],  # {char: idx}
-    padding_value=-1,
-) -> mx.array:  # Int['b nt']:
-    list_idx_tensors = [
-        [vocab_char_map.get(c, 0) for c in t] for t in text
-    ]  # pinyin or char style
-    
-    list_idx_tensors = [mx.array(t) for t in list_idx_tensors]
-    text = pad_sequence(list_idx_tensors, padding_value=padding_value)
-    return text
-
+from f5_tts_mlx.utils import (
+    exists,
+    default,
+    lens_to_mask,
+    mask_from_frac_lengths,
+    list_str_to_idx,
+    list_str_to_tensor,
+    pad_sequence,
+    fetch_from_hub,
+)
 
 # conditional flow matching
 
@@ -166,6 +46,7 @@ class F5TTS(nn.Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str, int] | None = None,
+        duration_predictor: DurationPredictor | None = None,
     ):
         super().__init__()
 
@@ -190,6 +71,9 @@ class F5TTS(nn.Module):
 
         # vocab map for tokenization
         self.vocab_char_map = vocab_char_map
+
+        # duration predictor (optional)
+        self._duration_predictor = duration_predictor
 
     def __call__(
         self,
@@ -308,11 +192,12 @@ class F5TTS(nn.Module):
         self,
         cond: mx.array["b n d"] | mx.array["b nw"],
         text: mx.array["b nt"] | list[str],
-        duration: int | mx.array["b"],
+        duration: int | mx.array["b"] | None = None,
         *,
         lens: mx.array["b"] | None = None,
         steps=32,
         cfg_strength=1.0,
+        speed=1.0,
         sway_sampling_coef=None,
         seed: int | None = None,
         max_duration=4096,
@@ -348,6 +233,17 @@ class F5TTS(nn.Module):
             lens = mx.maximum(text_lens, lens)
 
         # duration
+
+        if duration is None and self._duration_predictor is not None:
+            duration_in_sec = self._duration_predictor(cond, text)
+            frame_rate = self.mel_spec.sample_rate // self.mel_spec.hop_length
+            duration = (duration_in_sec * frame_rate / speed).astype(mx.int32).item()
+            print(f"Got duration of {duration} frames ({duration_in_sec.item()} secs) for generated speech.")
+            
+            # include the reference audio length
+            duration = duration + lens
+        elif duration is None:
+            raise ValueError("Duration must be provided or a duration predictor must be set.")
 
         cond_mask = lens_to_mask(lens)
         if edit_mask is not None:
@@ -449,9 +345,31 @@ class F5TTS(nn.Module):
         if path is None:
             raise ValueError(f"Could not find model {hf_model_name_or_path}")
 
-        model_path = path / "model.safetensors"
         vocab_path = path / "vocab.txt"
         vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
+        if len(vocab) == 0:
+            raise ValueError(f"Could not load vocab from {vocab_path}")
+
+        duration_model_path = path / "duration_model.safetensors"
+        duration_predictor = None
+        
+        if duration_model_path.exists():
+            duration_predictor = DurationPredictor(
+                transformer=DurationTransformer(
+                    dim=256,
+                    depth=8,
+                    heads=8,
+                    text_dim=256,
+                    ff_mult=2,
+                    conv_layers=4,
+                    text_num_embeds=len(vocab) - 1,
+                ),
+                vocab_char_map=vocab,
+            )
+            weights = mx.load(duration_model_path.as_posix(), format="safetensors")
+            duration_predictor.load_weights(list(weights.items()))
+        
+        model_path = path / "model.safetensors"
         
         f5tts = F5TTS(
             transformer=DiT(
@@ -464,8 +382,9 @@ class F5TTS(nn.Module):
                 text_num_embeds=len(vocab) - 1,
             ),
             vocab_char_map=vocab,
+            duration_predictor=duration_predictor,
         )
-        
+
         weights = mx.load(model_path.as_posix(), format="safetensors")
         f5tts.load_weights(list(weights.items()))
         mx.eval(f5tts.parameters())

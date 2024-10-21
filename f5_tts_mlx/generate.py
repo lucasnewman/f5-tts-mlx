@@ -30,7 +30,7 @@ def generate(
     steps: int = 32,
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
-    speed: float = 1.0, # used when duration is None as part of the duration heuristic
+    speed: float = 1.0,  # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
@@ -63,19 +63,6 @@ def generate(
 
     # generate the audio for the given text
     text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
-    
-    # use a heuristic to determine the duration if not provided
-    if duration is None:
-        ref_audio_len = audio.shape[0] // HOP_LENGTH
-        zh_pause_punc = r"。，、；：？！"
-        ref_text_len = len(ref_audio_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, ref_audio_text))
-        gen_text_len = len(generation_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, generation_text))
-        duration_in_frames = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
-        duration = (duration_in_frames / FRAMES_PER_SEC) - ref_audio_duration
-        print(f"Using duration of {duration:.2f} seconds for generated speech.")
-
-    frame_duration = int((ref_audio_duration + duration) * FRAMES_PER_SEC)
-    print(f"Generating {frame_duration} total frames of audio...")
 
     start_date = datetime.datetime.now()
     vocos = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
@@ -83,8 +70,9 @@ def generate(
     wave, _ = f5tts.sample(
         mx.expand_dims(audio, axis=0),
         text=text,
-        duration=frame_duration,
+        duration=None,
         steps=steps,
+        speed=speed,
         cfg_strength=cfg_strength,
         sway_sampling_coef=sway_sampling_coef,
         seed=seed,
@@ -92,7 +80,7 @@ def generate(
     )
 
     # trim the reference audio
-    wave = wave[audio.shape[0]:]
+    wave = wave[audio.shape[0] :]
     generated_duration = wave.shape[0] / SAMPLE_RATE
     elapsed_time = datetime.datetime.now() - start_date
 
