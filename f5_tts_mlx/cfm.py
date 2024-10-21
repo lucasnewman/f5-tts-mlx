@@ -159,11 +159,6 @@ class F5TTS(nn.Module):
         self,
         transformer: nn.Module,
         sigma=0.0,
-        odeint_kwargs: dict = dict(
-            # atol = 1e-5,
-            # rtol = 1e-5,
-            method="euler"  # 'midpoint'
-        ),
         audio_drop_prob=0.3,
         cond_drop_prob=0.2,
         num_channels=None,
@@ -192,9 +187,6 @@ class F5TTS(nn.Module):
 
         # conditional flow related
         self.sigma = sigma
-
-        # sampling related
-        self.odeint_kwargs = odeint_kwargs
 
         # vocab map for tokenization
         self.vocab_char_map = vocab_char_map
@@ -230,7 +222,7 @@ class F5TTS(nn.Module):
 
         # get a random span to mask out for training conditionally
         frac_lengths = mx.random.uniform(*self.frac_lengths_mask, (batch,))
-        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths)
+        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths, max_length = seq_len)
 
         if exists(mask):
             rand_span_mask = rand_span_mask & mask
@@ -282,7 +274,7 @@ class F5TTS(nn.Module):
         masked_loss = mx.where(rand_span_mask, loss, mx.zeros_like(loss))
         loss = mx.sum(masked_loss) / mx.maximum(mx.sum(rand_span_mask), 1e-6)
 
-        return loss.mean(), cond
+        return loss.mean()
 
     def odeint(self, func, y0, t, **kwargs):
         """
@@ -326,7 +318,6 @@ class F5TTS(nn.Module):
         max_duration=4096,
         vocoder: Callable[[mx.array["b d n"]], mx.array["b nw"]] | None = None,
         no_ref_audio=False,
-        t_inter=0.1,
         edit_mask=None,
     ) -> tuple[mx.array, mx.array]:
         self.eval()
@@ -435,7 +426,7 @@ class F5TTS(nn.Module):
         if exists(sway_sampling_coef):
             t = t + sway_sampling_coef * (mx.cos(mx.pi / 2 * t) - 1 + t)
 
-        trajectory = self.odeint(fn, y0, t, **self.odeint_kwargs)
+        trajectory = self.odeint(fn, y0, t)
 
         sampled = trajectory[-1]
         out = sampled
