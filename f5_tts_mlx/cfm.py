@@ -239,9 +239,6 @@ class F5TTS(nn.Module):
             frame_rate = self.mel_spec.sample_rate // self.mel_spec.hop_length
             duration = (duration_in_sec * frame_rate / speed).astype(mx.int32).item()
             print(f"Got duration of {duration} frames ({duration_in_sec.item()} secs) for generated speech.")
-            
-            # include the reference audio length
-            duration = duration + lens
         elif duration is None:
             raise ValueError("Duration must be provided or a duration predictor must be set.")
 
