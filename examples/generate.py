@@ -27,6 +27,7 @@ def generate(
     model_name: str = "lucasnewman/f5-tts-mlx",
     ref_audio_path: Optional[str] = None,
     ref_audio_text: Optional[str] = None,
+    steps: int = 32,
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
     speed: float = 1.0, # used when duration is None as part of the duration heuristic
@@ -83,7 +84,7 @@ def generate(
         mx.expand_dims(audio, axis=0),
         text=text,
         duration=frame_duration,
-        steps=32,
+        steps=steps,
         cfg_strength=cfg_strength,
         sway_sampling_coef=sway_sampling_coef,
         seed=seed,
@@ -139,6 +140,12 @@ if __name__ == "__main__":
         help="Path to save the generated audio output",
     )
     parser.add_argument(
+        "--steps",
+        type=int,
+        default=32,
+        help="Number of steps to take when sampling the neural ODE",
+    )
+    parser.add_argument(
         "--cfg",
         type=float,
         default=2.0,
@@ -171,6 +178,7 @@ if __name__ == "__main__":
         model_name=args.model,
         ref_audio_path=args.ref_audio,
         ref_audio_text=args.ref_text,
+        steps=args.steps,
         cfg_strength=args.cfg,
         sway_sampling_coef=args.sway_coef,
         speed=args.speed,
