@@ -1,8 +1,7 @@
 import argparse
 import datetime
 import pkgutil
-import re
-from typing import Optional
+from typing import Literal, Optional
 
 import mlx.core as mx
 
@@ -10,8 +9,6 @@ import numpy as np
 
 from f5_tts_mlx.cfm import F5TTS
 from f5_tts_mlx.utils import convert_char_to_pinyin
-
-from vocos_mlx import Vocos
 
 import soundfile as sf
 
@@ -28,9 +25,10 @@ def generate(
     ref_audio_path: Optional[str] = None,
     ref_audio_text: Optional[str] = None,
     steps: int = 32,
+    method: Literal["euler", "midpoint"] = "euler",
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
-    speed: float = 1.0,  # used when duration is None as part of the duration heuristic
+    speed: float = 0.8,  # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
@@ -65,18 +63,20 @@ def generate(
     text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
 
     start_date = datetime.datetime.now()
-    vocos = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
+    
+    if duration is not None:
+        duration = int(duration * FRAMES_PER_SEC)
 
     wave, _ = f5tts.sample(
         mx.expand_dims(audio, axis=0),
         text=text,
-        duration=None,
+        duration=duration,
         steps=steps,
+        method=method,
         speed=speed,
         cfg_strength=cfg_strength,
         sway_sampling_coef=sway_sampling_coef,
-        seed=seed,
-        vocoder=vocos.decode,
+        seed=seed
     )
 
     # trim the reference audio
@@ -134,6 +134,13 @@ if __name__ == "__main__":
         help="Number of steps to take when sampling the neural ODE",
     )
     parser.add_argument(
+        "--method",
+        type=str,
+        default="euler",
+        choices=["euler", "midpoint"],
+        help="Method to use for sampling the neural ODE",
+    )
+    parser.add_argument(
         "--cfg",
         type=float,
         default=2.0,
@@ -148,7 +155,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--speed",
         type=float,
-        default=1.0,
+        default=0.8,
         help="Speed factor for the duration heuristic",
     )
     parser.add_argument(
@@ -167,6 +174,7 @@ if __name__ == "__main__":
         ref_audio_path=args.ref_audio,
         ref_audio_text=args.ref_text,
         steps=args.steps,
+        method=args.method,
         cfg_strength=args.cfg,
         sway_sampling_coef=args.sway_coef,
         speed=args.speed,

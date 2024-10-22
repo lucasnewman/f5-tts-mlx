@@ -114,7 +114,7 @@ class DiT(nn.Module):
         depth=8,
         heads=8,
         dim_head=64,
-        dropout=0.1,
+        dropout=0.0,
         ff_mult=4,
         mel_dim=100,
         text_num_embeds=256,

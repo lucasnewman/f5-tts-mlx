@@ -8,14 +8,17 @@ d - dimension
 """
 
 from __future__ import annotations
+from datetime import datetime
 from pathlib import Path
 from random import random
-from typing import Callable
+from typing import Callable, Literal
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from einops.array_api import rearrange, repeat
+
+from vocos_mlx import Vocos
 
 from f5_tts_mlx.duration import DurationPredictor, DurationTransformer
 from f5_tts_mlx.dit import DiT
@@ -46,6 +49,7 @@ class F5TTS(nn.Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         vocab_char_map: dict[str, int] | None = None,
+        vocoder: Callable[[mx.array["b d n"]], mx.array["b nw"]] | None = None,
         duration_predictor: DurationPredictor | None = None,
     ):
         super().__init__()
@@ -71,6 +75,9 @@ class F5TTS(nn.Module):
 
         # vocab map for tokenization
         self.vocab_char_map = vocab_char_map
+
+        # vocoder (optional)
+        self._vocoder = vocoder
 
         # duration predictor (optional)
         self._duration_predictor = duration_predictor
@@ -106,7 +113,7 @@ class F5TTS(nn.Module):
 
         # get a random span to mask out for training conditionally
         frac_lengths = mx.random.uniform(*self.frac_lengths_mask, (batch,))
-        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths, max_length = seq_len)
+        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths, max_length=seq_len)
 
         if exists(mask):
             rand_span_mask = rand_span_mask & mask
@@ -160,7 +167,7 @@ class F5TTS(nn.Module):
 
         return loss.mean()
 
-    def odeint(self, func, y0, t, **kwargs):
+    def odeint_midpoint(self, func, y0, t):
         """
         Solves ODE using the midpoint method.
 
@@ -188,6 +195,30 @@ class F5TTS(nn.Module):
 
         return mx.stack(ys)
 
+    def odeint_euler(self, func, y0, t):
+        """
+        Solves ODE using the Euler method.
+
+        Parameters:
+        - y0: Initial state, an MLX array of any shape.
+        - t: Array of time steps, an MLX array.
+        """
+        ys = [y0]
+        y_current = y0
+
+        for i in range(len(t) - 1):
+            t_current = t[i]
+            dt = t[i + 1] - t_current
+
+            # compute the next value
+            k = func(t_current, y_current)
+            y_next = y_current + dt * k
+
+            ys.append(y_next)
+            y_current = y_next
+
+        return mx.stack(ys)
+
     def sample(
         self,
         cond: mx.array["b n d"] | mx.array["b nw"],
@@ -196,15 +227,17 @@ class F5TTS(nn.Module):
         *,
         lens: mx.array["b"] | None = None,
         steps=32,
-        cfg_strength=1.0,
+        method: Literal["euler", "midpoint"] = "euler",
+        cfg_strength=2.0,
         speed=1.0,
-        sway_sampling_coef=None,
+        sway_sampling_coef=-1.0,
         seed: int | None = None,
         max_duration=4096,
-        vocoder: Callable[[mx.array["b d n"]], mx.array["b nw"]] | None = None,
         no_ref_audio=False,
         edit_mask=None,
     ) -> tuple[mx.array, mx.array]:
+        start_date = datetime.now()
+
         self.eval()
 
         # raw wave
@@ -238,9 +271,13 @@ class F5TTS(nn.Module):
             duration_in_sec = self._duration_predictor(cond, text)
             frame_rate = self.mel_spec.sample_rate // self.mel_spec.hop_length
             duration = (duration_in_sec * frame_rate / speed).astype(mx.int32).item()
-            print(f"Got duration of {duration} frames ({duration_in_sec.item()} secs) for generated speech.")
+            print(
+                f"Got duration of {duration} frames ({duration_in_sec.item()} secs) for generated speech."
+            )
         elif duration is None:
-            raise ValueError("Duration must be provided or a duration predictor must be set.")
+            raise ValueError(
+                "Duration must be provided or a duration predictor must be set."
+            )
 
         cond_mask = lens_to_mask(lens)
         if edit_mask is not None:
@@ -260,9 +297,10 @@ class F5TTS(nn.Module):
             constant_values=False,
         )
         cond_mask = rearrange(cond_mask, "... -> ... 1")
-        step_cond = mx.where(
-            cond_mask, cond, mx.zeros_like(cond)
-        )  # allow direct control (cut cond audio) with lens passed in
+
+        # at each step, conditioning is fixed
+
+        step_cond = mx.where(cond_mask, cond, mx.zeros_like(cond))
 
         if batch > 1:
             mask = lens_to_mask(duration)
@@ -276,9 +314,6 @@ class F5TTS(nn.Module):
         # neural ode
 
         def fn(t, x):
-            # at each step, conditioning is fixed
-            # step_cond = mx.where(cond_mask, cond, mx.zeros_like(cond))
-
             # predict flow
             pred = self.transformer(
                 x=x,
@@ -290,6 +325,7 @@ class F5TTS(nn.Module):
                 drop_text=False,
             )
             if cfg_strength < 1e-5:
+                mx.eval(pred)
                 return pred
 
             null_pred = self.transformer(
@@ -301,11 +337,12 @@ class F5TTS(nn.Module):
                 drop_audio_cond=True,
                 drop_text=True,
             )
-            return pred + (pred - null_pred) * cfg_strength
+            output = pred + (pred - null_pred) * cfg_strength
+            mx.eval(output)
+            return output
 
         # noise input
-        # to make sure batch inference result is same with different batch size, and for sure single inference
-        # still some difference maybe due to convolutional layers
+        
         y0 = []
         for dur in duration:
             if exists(seed):
@@ -319,37 +356,45 @@ class F5TTS(nn.Module):
         if exists(sway_sampling_coef):
             t = t + sway_sampling_coef * (mx.cos(mx.pi / 2 * t) - 1 + t)
 
-        trajectory = self.odeint(fn, y0, t)
+        if method == "midpoint":
+            trajectory = self.odeint_midpoint(fn, y0, t)
+        elif method == "euler":
+            trajectory = self.odeint_euler(fn, y0, t)
+        else:
+            raise ValueError(f"Unknown method: {method}")
 
         sampled = trajectory[-1]
         out = sampled
         out = mx.where(cond_mask, cond, out)
 
-        if exists(vocoder):
-            out = vocoder(out)
-            
+        if exists(self._vocoder):
+            out = self._vocoder(out)
+
         mx.eval(out)
+
+        print(f"Generated speech in {datetime.now() - start_date}")
 
         return out, trajectory
 
     @classmethod
-    def from_pretrained(
-        cls,
-        hf_model_name_or_path: str
-    ) -> F5TTS:
+    def from_pretrained(cls, hf_model_name_or_path: str) -> F5TTS:
         path = fetch_from_hub(hf_model_name_or_path)
-        
+
         if path is None:
             raise ValueError(f"Could not find model {hf_model_name_or_path}")
+
+        # vocab
 
         vocab_path = path / "vocab.txt"
         vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
         if len(vocab) == 0:
             raise ValueError(f"Could not load vocab from {vocab_path}")
 
+        # duration predictor
+
         duration_model_path = path / "duration_model.safetensors"
         duration_predictor = None
-        
+
         if duration_model_path.exists():
             duration_predictor = DurationPredictor(
                 transformer=DurationTransformer(
@@ -365,9 +410,15 @@ class F5TTS(nn.Module):
             )
             weights = mx.load(duration_model_path.as_posix(), format="safetensors")
             duration_predictor.load_weights(list(weights.items()))
-        
+
+        # vocoder
+
+        vocos = Vocos.from_pretrained("lucasnewman/vocos-mel-24khz")
+
+        # model
+
         model_path = path / "model.safetensors"
-        
+
         f5tts = F5TTS(
             transformer=DiT(
                 dim=1024,
@@ -379,11 +430,12 @@ class F5TTS(nn.Module):
                 text_num_embeds=len(vocab) - 1,
             ),
             vocab_char_map=vocab,
+            vocoder=vocos.decode,
             duration_predictor=duration_predictor,
         )
 
         weights = mx.load(model_path.as_posix(), format="safetensors")
         f5tts.load_weights(list(weights.items()))
         mx.eval(f5tts.parameters())
-        
+
         return f5tts
