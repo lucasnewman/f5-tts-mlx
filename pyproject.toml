@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "f5-tts-mlx"
-version = "0.1.4"
+version = "0.1.5"
 authors = [{name = "Lucas Newman", email = "lucasnewman@me.com"}]
 license = {text = "MIT"}
 description = "F5-TTS - MLX"
@@ -32,7 +32,7 @@ dependencies = [
     "einx",
     "jieba",
     "huggingface_hub",
-    "mlx",
+    "mlx>=0.18.1",
     "numpy",
     "pypinyin",
     "setuptools",

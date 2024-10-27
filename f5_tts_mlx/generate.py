@@ -63,7 +63,7 @@ def generate(
     text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
 
     start_date = datetime.datetime.now()
-    
+
     if duration is not None:
         duration = int(duration * FRAMES_PER_SEC)
 
@@ -76,7 +76,7 @@ def generate(
         speed=speed,
         cfg_strength=cfg_strength,
         sway_sampling_coef=sway_sampling_coef,
-        seed=seed
+        seed=seed,
     )
 
     # trim the reference audio

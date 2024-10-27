@@ -37,7 +37,7 @@ You can convert an audio file to the correct format with ffmpeg like this:
 ffmpeg -i /path/to/audio.wav -ac 1 -ar 24000 -sample_fmt s16 -t 10 /path/to/output_audio.wav
 ```
 
-See [examples/generate.py](./examples) for more options.
+See [here](./f5_tts_mlx) for more options to customize generation.
 
 —
 
