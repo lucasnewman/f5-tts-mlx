@@ -44,11 +44,9 @@ See [here](./f5_tts_mlx) for more options to customize generation.
 You can load a pretrained model from Python like this:
 
 ```python
-from f5_tts_mlx import F5TTS
+from f5_tts_mlx.generate import generate
 
-f5tts = F5TTS.from_pretrained("lucasnewman/f5-tts-mlx")
-
-audio = f5tts.sample(...)
+audio = generate(text = "Hello world.", ...)
 ```
 
 Pretrained model weights are also available [on Hugging Face](https://huggingface.co/lucasnewman/f5-tts-mlx).
