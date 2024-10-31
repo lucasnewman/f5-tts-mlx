@@ -15,9 +15,8 @@ import mlx.nn as nn
 from einops.array_api import rearrange, repeat
 import einx
 
-from f5_tts_mlx.dit import TextEmbedding, TimestepEmbedding, ConvPositionEmbedding
+from f5_tts_mlx.dit import TextEmbedding, ConvPositionEmbedding
 from f5_tts_mlx.modules import Attention, FeedForward, MelSpec, RotaryEmbedding
-from f5_tts_mlx.dit import DiTBlock
 from f5_tts_mlx.utils import (
     exists,
     default,
@@ -257,5 +256,4 @@ class DurationPredictor(nn.Module):
 
         duration = lens.astype(pred.dtype) / SAMPLES_PER_SECOND
 
-        # return nn.losses.mse_loss(pred, duration)
         return nn.losses.l1_loss(pred, duration)

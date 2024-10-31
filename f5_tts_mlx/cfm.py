@@ -58,7 +58,7 @@ class F5TTS(nn.Module):
 
         # mel spec
         self._mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
-        num_channels = default(num_channels, self.mel_spec.n_mels)
+        num_channels = default(num_channels, self._mel_spec.n_mels)
         self.num_channels = num_channels
 
         # classifier-free guidance
@@ -392,18 +392,18 @@ class F5TTS(nn.Module):
 
         # duration predictor
 
-        duration_model_path = path / "duration_model.safetensors"
+        duration_model_path = path / "duration_v2.safetensors"
         duration_predictor = None
 
         if duration_model_path.exists():
             duration_predictor = DurationPredictor(
                 transformer=DurationTransformer(
-                    dim=256,
+                    dim=512,
                     depth=8,
                     heads=8,
-                    text_dim=256,
+                    text_dim=512,
                     ff_mult=2,
-                    conv_layers=4,
+                    conv_layers=2,
                     text_num_embeds=len(vocab) - 1,
                 ),
                 vocab_char_map=vocab,
