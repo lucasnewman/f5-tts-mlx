@@ -89,7 +89,7 @@ def maybe_masked_mean(t: mx.array, mask: mx.array | None = None) -> mx.array:
     return einx.divide("b d, b -> b d", num, mx.maximum(den, 1))
 
 
-def pad_to_length(t: mx.array, length: int, value=None):
+def pad_to_length(t: mx.array, length: int, value=0):
     ndim = t.ndim
     seq_len = t.shape[-1]
     if length > seq_len:
