@@ -47,7 +47,7 @@ Homepage = "https://github.com/lucasnewman/f5-tts-mlx"
 packages = ["f5_tts_mlx"]
 
 [tool.setuptools.package-data]
-f5_tts_mlx = ["assets/mel_filters.npz", "tests/test_en_1_ref_short.wav"]
+f5_tts_mlx = ["tests/test_en_1_ref_short.wav"]
 
 [project.scripts]
 f5-tts-mlx = "f5_tts_mlx.generate:main"

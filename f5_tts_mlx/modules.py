@@ -1,10 +1,7 @@
 from __future__ import annotations
 from functools import lru_cache
-import io
 import math
-import os
-import pkgutil
-from typing import Union
+from typing import Optional, Union
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -121,22 +118,76 @@ def apply_rotary_pos_emb(t, freqs, scale=1):
 
 
 @lru_cache(maxsize=None)
-def mel_filters(n_mels: int) -> mx.array:
-    """
-    load the mel filterbank matrix for projecting STFT into a Mel spectrogram.
-    Saved using extract_filterbank.py
-    """
-    assert n_mels in {100}, f"Unsupported n_mels: {n_mels}"
+def mel_filters(
+    sample_rate: int,
+    n_fft: int,
+    n_mels: int,
+    f_min: float = 0,
+    f_max: Optional[float] = None,
+    norm: Optional[str] = None,
+    mel_scale: str = "htk",
+) -> mx.array:
+    def hz_to_mel(freq, mel_scale="htk"):
+        if mel_scale == "htk":
+            return 2595.0 * math.log10(1.0 + freq / 700.0)
 
-    # try to pull the filterbank from the package
-    data = pkgutil.get_data("f5_tts_mlx", "assets/mel_filters.npz")
-    if data is not None:
-        npzfile = np.load(io.BytesIO(data))
-        return mx.array(npzfile[f"mel_{n_mels}"])
+        # slaney scale
+        f_min, f_sp = 0.0, 200.0 / 3
+        mels = (freq - f_min) / f_sp
+        min_log_hz = 1000.0
+        min_log_mel = (min_log_hz - f_min) / f_sp
+        logstep = math.log(6.4) / 27.0
+        if freq >= min_log_hz:
+            mels = min_log_mel + math.log(freq / min_log_hz) / logstep
+        return mels
 
-    # otherwise load it from disk
-    filename = os.path.join("assets", "mel_filters.npz")
-    return mx.load(filename, format="npz")[f"mel_{n_mels}"]
+    def mel_to_hz(mels, mel_scale="htk"):
+        if mel_scale == "htk":
+            return 700.0 * (10.0 ** (mels / 2595.0) - 1.0)
+
+        # slaney scale
+        f_min, f_sp = 0.0, 200.0 / 3
+        freqs = f_min + f_sp * mels
+        min_log_hz = 1000.0
+        min_log_mel = (min_log_hz - f_min) / f_sp
+        logstep = math.log(6.4) / 27.0
+        log_t = mels >= min_log_mel
+        freqs[log_t] = min_log_hz * mx.exp(logstep * (mels[log_t] - min_log_mel))
+        return freqs
+
+    f_max = f_max or sample_rate / 2
+
+    # generate frequency points
+
+    n_freqs = n_fft // 2 + 1
+    all_freqs = mx.linspace(0, sample_rate // 2, n_freqs)
+
+    # convert frequencies to mel and back to hz
+
+    m_min = hz_to_mel(f_min, mel_scale)
+    m_max = hz_to_mel(f_max, mel_scale)
+    m_pts = mx.linspace(m_min, m_max, n_mels + 2)
+    f_pts = mel_to_hz(m_pts, mel_scale)
+
+    # compute slopes for filterbank
+
+    f_diff = f_pts[1:] - f_pts[:-1]
+    slopes = mx.expand_dims(f_pts, 0) - mx.expand_dims(all_freqs, 1)
+
+    # calculate overlapping triangular filters
+
+    down_slopes = (-slopes[:, :-2]) / f_diff[:-1]
+    up_slopes = slopes[:, 2:] / f_diff[1:]
+    filterbank = mx.maximum(
+        mx.zeros_like(down_slopes), mx.minimum(down_slopes, up_slopes)
+    )
+
+    if norm == "slaney":
+        enorm = 2.0 / (f_pts[2 : n_mels + 2] - f_pts[:n_mels])
+        filterbank *= mx.expand_dims(enorm, 0)
+
+    filterbank = filterbank.moveaxis(0, 1)
+    return filterbank
 
 
 @lru_cache(maxsize=None)
@@ -172,6 +223,7 @@ def stft(x, window, nperseg=256, noverlap=None, nfft=None, pad_mode="constant"):
 
 def log_mel_spectrogram(
     audio: Union[mx.array, np.ndarray],
+    sample_rate: int = 24_000,
     n_mels: int = 100,
     n_fft: int = 1024,
     hop_length: int = 256,
@@ -183,7 +235,13 @@ def log_mel_spectrogram(
 
     freqs = stft(audio, hanning(n_fft), nperseg=n_fft, noverlap=hop_length)
     magnitudes = freqs[:-1, :].abs()
-    filters = filterbank if filterbank is not None else mel_filters(n_mels)
+    filters = filterbank if filterbank is not None else mel_filters(
+        sample_rate=sample_rate,
+        n_fft=n_fft,
+        n_mels=n_mels,
+        norm=None,
+        mel_scale="htk"
+    )
     mel_spec = magnitudes @ filters.T
     log_spec = mx.maximum(mel_spec, 1e-5).log()
     return mx.expand_dims(log_spec, axis=0)
