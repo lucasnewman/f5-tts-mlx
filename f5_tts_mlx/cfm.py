@@ -57,7 +57,7 @@ class F5TTS(nn.Module):
         self.frac_lengths_mask = frac_lengths_mask
 
         # mel spec
-        self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
+        self._mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
         num_channels = default(num_channels, self.mel_spec.n_mels)
         self.num_channels = num_channels
 
@@ -74,7 +74,7 @@ class F5TTS(nn.Module):
         self.sigma = sigma
 
         # vocab map for tokenization
-        self.vocab_char_map = vocab_char_map
+        self._vocab_char_map = vocab_char_map
 
         # vocoder (optional)
         self._vocoder = vocoder
@@ -91,7 +91,7 @@ class F5TTS(nn.Module):
     ) -> tuple[mx.array, mx.array, mx.array]:
         # handle raw wave
         if inp.ndim == 2:
-            inp = self.mel_spec(inp)
+            inp = self._mel_spec(inp)
             inp = rearrange(inp, "b d n -> b n d")
             assert inp.shape[-1] == self.num_channels
 
@@ -99,8 +99,8 @@ class F5TTS(nn.Module):
 
         # handle text as string
         if isinstance(text, list):
-            if exists(self.vocab_char_map):
-                text = list_str_to_idx(text, self.vocab_char_map)
+            if exists(self._vocab_char_map):
+                text = list_str_to_idx(text, self._vocab_char_map)
             else:
                 text = list_str_to_tensor(text)
             assert text.shape[0] == batch
@@ -244,7 +244,7 @@ class F5TTS(nn.Module):
 
         if cond.ndim == 2:
             cond = rearrange(cond, "1 n -> n")
-            cond = self.mel_spec(cond)
+            cond = self._mel_spec(cond)
             # cond = rearrange(cond, "b d n -> b n d")
             assert cond.shape[-1] == self.num_channels
 
@@ -255,8 +255,8 @@ class F5TTS(nn.Module):
         # text
 
         if isinstance(text, list):
-            if exists(self.vocab_char_map):
-                text = list_str_to_idx(text, self.vocab_char_map)
+            if exists(self._vocab_char_map):
+                text = list_str_to_idx(text, self._vocab_char_map)
             else:
                 text = list_str_to_tensor(text)
             assert text.shape[0] == batch
@@ -269,7 +269,7 @@ class F5TTS(nn.Module):
 
         if duration is None and self._duration_predictor is not None:
             duration_in_sec = self._duration_predictor(cond, text)
-            frame_rate = self.mel_spec.sample_rate // self.mel_spec.hop_length
+            frame_rate = self._mel_spec.sample_rate // self._mel_spec.hop_length
             duration = (duration_in_sec * frame_rate / speed).astype(mx.int32).item()
             print(
                 f"Got duration of {duration} frames ({duration_in_sec.item()} secs) for generated speech."
@@ -436,6 +436,39 @@ class F5TTS(nn.Module):
 
         weights = mx.load(model_path.as_posix(), format="safetensors")
         f5tts.load_weights(list(weights.items()))
+        mx.eval(f5tts.parameters())
+
+        return f5tts
+
+    @classmethod
+    def for_training(cls, hf_model_name_or_path: str) -> F5TTS:
+        path = fetch_from_hub(hf_model_name_or_path)
+
+        if path is None:
+            raise ValueError(f"Could not find model {hf_model_name_or_path}")
+
+        # vocab
+
+        vocab_path = path / "vocab.txt"
+        vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
+        if len(vocab) == 0:
+            raise ValueError(f"Could not load vocab from {vocab_path}")
+
+        # model
+
+        f5tts = F5TTS(
+            transformer=DiT(
+                dim=384,
+                depth=16,
+                heads=8,
+                ff_mult=2,
+                text_dim=256,
+                conv_layers=0,
+                text_num_embeds=len(vocab) - 1,
+            ),
+            vocab_char_map=vocab
+        )
+
         mx.eval(f5tts.parameters())
 
         return f5tts

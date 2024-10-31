@@ -85,7 +85,7 @@ def precompute_freqs_cis(
 
 def get_pos_embed_indices(start, length, max_pos, scale=1.0):
     # length = length if isinstance(length, int) else length.max()
-    scale = scale * mx.ones_like(start).astype(mx.float32)  # in case scale is a scalar
+    scale = scale * mx.ones_like(start)
     pos = mx.expand_dims(start, axis=1) + (
         mx.expand_dims(mx.arange(length), axis=0) * mx.expand_dims(scale, axis=1)
     ).astype(mx.int32)
@@ -127,9 +127,9 @@ def mel_filters(n_mels: int) -> mx.array:
     Saved using extract_filterbank.py
     """
     assert n_mels in {100}, f"Unsupported n_mels: {n_mels}"
-    
+
     # try to pull the filterbank from the package
-    data = pkgutil.get_data('f5_tts_mlx', 'assets/mel_filters.npz')
+    data = pkgutil.get_data("f5_tts_mlx", "assets/mel_filters.npz")
     if data is not None:
         npzfile = np.load(io.BytesIO(data))
         return mx.array(npzfile[f"mel_{n_mels}"])
@@ -465,47 +465,6 @@ class Attention(nn.Module):
         if attn_mask is not None:
             mask = rearrange(mask, "b n -> b n 1")
             x = x.masked_fill(~mask, 0.0)
-
-        return x
-
-
-# DiT block
-
-
-class DiTBlock(nn.Module):
-    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.1):
-        super().__init__()
-
-        self.attn_norm = AdaLayerNormZero(dim)
-        self.attn = Attention(
-            dim=dim,
-            heads=heads,
-            dim_head=dim_head,
-            dropout=dropout,
-        )
-
-        self.ff_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
-        self.ff = FeedForward(
-            dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh"
-        )
-
-    def __call__(
-        self, x, t, mask=None, rope=None
-    ):  # x: noised input, t: time embedding
-        # pre-norm & modulation for attention input
-        norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
-
-        # attention
-        attn_output = self.attn(x=norm, mask=mask, rope=rope)
-
-        # process attention output for input x
-        x = x + mx.expand_dims(gate_msa, axis=1) * attn_output
-
-        norm = self.ff_norm(x) * (
-            1 + mx.expand_dims(scale_mlp, axis=1)
-        ) + mx.expand_dims(shift_mlp, axis=1)
-        ff_output = self.ff(norm)
-        x = x + mx.expand_dims(gate_mlp, axis=1) * ff_output
 
         return x
 

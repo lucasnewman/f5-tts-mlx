@@ -1,5 +1,6 @@
 from __future__ import annotations
 import datetime
+from functools import partial
 
 from einops.array_api import rearrange
 
@@ -105,9 +106,9 @@ class DurationTrainer:
             loss = model(mel_spec, text=text, lens=lens, return_loss=True)
             return loss
 
-        # state = [self.model.state, self.optimizer.state, mx.random.state]
+        state = [self.model.state, self.optimizer.state, mx.random.state]
 
-        # @partial(mx.compile, inputs=state, outputs=state)
+        @partial(mx.compile, inputs=state, outputs=state)
         def train_step(mel_spec, text_inputs, mel_lens):
             loss_and_grad_fn = nn.value_and_grad(self.model, loss_fn)
             loss, grads = loss_and_grad_fn(
@@ -123,31 +124,24 @@ class DurationTrainer:
 
         training_start_date = datetime.datetime.now()
         log_start_date = datetime.datetime.now()
-
-        batched_dataset = (
-            train_dataset.repeat(1_000_000)  # repeat indefinitely
-            .shuffle(1000)
-            .prefetch(prefetch_size=batch_size, num_threads=4)
-            .batch(batch_size)
-        )
-
-        for batch in batched_dataset:
+        
+        for batch in train_dataset:
             effective_batch_size = batch["transcript"].shape[0]
             text_inputs = [
                 bytes(batch["transcript"][i]).decode("utf-8")
                 for i in range(effective_batch_size)
             ]
 
-            mel_spec = rearrange(mx.array(batch["mel_spec"]), "b 1 n c -> b n c")
+            mel_spec = rearrange(mx.array(batch["mel_spec"]), "b 1 n c -> b n c") # .astype(mx.float16)
             mel_lens = mx.array(batch["mel_len"], dtype=mx.int32)
 
             loss = train_step(mel_spec, text_inputs, mel_lens)
-            # mx.eval(state)
-            mx.eval(self.model.parameters(), self.optimizer.state)
+            mx.eval(state)
+            # mx.eval(self.model.parameters(), self.optimizer.state)
 
             if self.log_with_wandb:
                 wandb.log(
-                    {"loss": loss.item(), "lr": self.optimizer.learning_rate.item()},
+                    {"loss": loss.item(), "lr": self.optimizer.learning_rate.item(), "batch_len": mel_lens.sum().item()},
                     step=global_step,
                 )
 
@@ -244,9 +238,9 @@ class F5TTSTrainer:
         def loss_fn(model: F5TTS, mel_spec, text, lens):
             return model(mel_spec, text=text, lens=lens)
 
-        # state = [self.model.state, self.optimizer.state, mx.random.state]
+        state = [self.model.state, self.optimizer.state, mx.random.state]
 
-        # @partial(mx.compile, inputs=state, outputs=state)
+        @partial(mx.compile, inputs=state, outputs=state)
         def train_step(mel_spec, text_inputs, mel_lens):
             loss_and_grad_fn = nn.value_and_grad(self.model, loss_fn)
             loss, grads = loss_and_grad_fn(
@@ -263,14 +257,7 @@ class F5TTSTrainer:
         training_start_date = datetime.datetime.now()
         log_start_date = datetime.datetime.now()
 
-        batched_dataset = (
-            train_dataset.repeat(1_000_000)  # repeat indefinitely
-            .shuffle(1000)
-            .prefetch(prefetch_size=batch_size, num_threads=4)
-            .batch(batch_size)
-        )
-
-        for batch in batched_dataset:
+        for batch in train_dataset:
             effective_batch_size = batch["transcript"].shape[0]
             text_inputs = [
                 bytes(batch["transcript"][i]).decode("utf-8")
@@ -281,8 +268,8 @@ class F5TTSTrainer:
             mel_lens = mx.array(batch["mel_len"], dtype=mx.int32)
 
             loss = train_step(mel_spec, text_inputs, mel_lens)
-            # mx.eval(state)
-            mx.eval(self.model.parameters(), self.optimizer.state)
+            mx.eval(state)
+            # mx.eval(self.model.parameters(), self.optimizer.state)
 
             if self.log_with_wandb:
                 wandb.log(

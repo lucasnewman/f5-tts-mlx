@@ -16,11 +16,8 @@ from einops.array_api import rearrange, repeat
 import einx
 
 from f5_tts_mlx.dit import TextEmbedding, TimestepEmbedding, ConvPositionEmbedding
-from f5_tts_mlx.modules import (
-    MelSpec,
-    RotaryEmbedding,
-    DiTBlock,
-)
+from f5_tts_mlx.modules import Attention, FeedForward, MelSpec, RotaryEmbedding
+from f5_tts_mlx.dit import DiTBlock
 from f5_tts_mlx.utils import (
     exists,
     default,
@@ -61,6 +58,42 @@ class DurationInputEmbedding(nn.Module):
         return x
 
 
+# Duration block
+
+
+class DurationBlock(nn.Module):
+    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.1):
+        super().__init__()
+
+        self.attn_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+        self.attn = Attention(
+            dim=dim,
+            heads=heads,
+            dim_head=dim_head,
+            dropout=dropout,
+        )
+
+        self.ff_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+        self.ff = FeedForward(
+            dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh"
+        )
+
+    def __call__(self, x, mask=None, rope=None):
+        norm = self.attn_norm(x)
+
+        # attention
+        attn_output = self.attn(x=norm, mask=mask, rope=rope)
+
+        # process attention output for input x
+        x = x + attn_output
+
+        norm = self.ff_norm(x)
+        ff_output = self.ff(norm)
+        x = x + ff_output
+
+        return x
+
+
 class DurationTransformer(nn.Module):
     def __init__(
         self,
@@ -92,7 +125,7 @@ class DurationTransformer(nn.Module):
         self.depth = depth
 
         self.transformer_blocks = [
-            DiTBlock(
+            DurationBlock(
                 dim=dim,
                 heads=heads,
                 dim_head=dim_head,
@@ -102,7 +135,7 @@ class DurationTransformer(nn.Module):
             for _ in range(depth)
         ]
 
-        self.norm_out = nn.RMSNorm(dim)  # final modulation
+        self.norm_out = nn.RMSNorm(dim)
 
     def __call__(
         self,
@@ -110,9 +143,7 @@ class DurationTransformer(nn.Module):
         text: int["b nt"],  # text
         mask: bool["b n"] | None = None,
     ):
-        batch, seq_len = x.shape[0], x.shape[1]
-
-        t = self.time_embed(mx.ones((batch,), dtype=mx.float32))
+        seq_len = x.shape[1]
 
         text_embed = self.text_embed(text, seq_len)
 
@@ -121,7 +152,7 @@ class DurationTransformer(nn.Module):
         rope = self.rotary_embed.forward_from_seq_len(seq_len)
 
         for block in self.transformer_blocks:
-            x = block(x, t, mask=mask, rope=rope)
+            x = block(x, mask=mask, rope=rope)
 
         x = self.norm_out(x)
 
@@ -140,8 +171,8 @@ class DurationPredictor(nn.Module):
 
         # mel spec
 
-        self.mel_spec = MelSpec(**mel_spec_kwargs)
-        num_channels = default(num_channels, self.mel_spec.n_mels)
+        self._mel_spec = MelSpec(**mel_spec_kwargs)
+        num_channels = default(num_channels, self._mel_spec.n_mels)
         self.num_channels = num_channels
 
         self.transformer = transformer
@@ -151,7 +182,7 @@ class DurationPredictor(nn.Module):
         self.dim = dim
 
         # vocab map for tokenization
-        self.vocab_char_map = vocab_char_map
+        self._vocab_char_map = vocab_char_map
 
         # to prediction
 
@@ -169,7 +200,7 @@ class DurationPredictor(nn.Module):
     ):
         # handle raw wave
         if inp.ndim == 2:
-            inp = self.mel_spec(inp)
+            inp = self._mel_spec(inp)
             inp = rearrange(inp, "b d n -> b n d")
             assert inp.shape[-1] == self.num_channels
 
@@ -177,8 +208,8 @@ class DurationPredictor(nn.Module):
 
         # handle text as string
         if isinstance(text, list):
-            if exists(self.vocab_char_map):
-                text = list_str_to_idx(text, self.vocab_char_map)
+            if exists(self._vocab_char_map):
+                text = list_str_to_idx(text, self._vocab_char_map)
             else:
                 text = list_str_to_tensor(text)
             assert text.shape[0] == batch
@@ -217,6 +248,7 @@ class DurationPredictor(nn.Module):
 
         # loss
 
-        duration = lens.astype(mx.float32) / SAMPLES_PER_SECOND
+        duration = lens.astype(pred.dtype) / SAMPLES_PER_SECOND
 
-        return nn.losses.mse_loss(pred, duration)
+        # return nn.losses.mse_loss(pred, duration)
+        return nn.losses.l1_loss(pred, duration)

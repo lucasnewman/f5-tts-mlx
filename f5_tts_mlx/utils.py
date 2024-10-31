@@ -50,7 +50,7 @@ def mask_from_start_end_indices(
     end: mx.array,
     max_length: int | None = None,
 ):
-    max_seq_len = default(max_length, seq_len.max().item())
+    max_seq_len = max_length # default(max_length, seq_len.max().item())
     seq = mx.arange(max_seq_len).astype(mx.int32)
     return einx.greater_equal("n, b -> b n", seq, start) & einx.less(
         "n, b -> b n", seq, end
