@@ -183,6 +183,10 @@ class DurationPredictor(nn.Module):
                 text = list_str_to_tensor(text)
             assert text.shape[0] == batch
 
+        if seq_len < text.shape[1]:
+            seq_len = text.shape[1]
+            inp = mx.pad(inp, [(0, 0), (0, seq_len - inp.shape[1]), (0, 0)])
+
         # lens and mask
         if not exists(lens):
             lens = mx.full((batch,), seq_len)
