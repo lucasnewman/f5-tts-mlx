@@ -439,36 +439,3 @@ class F5TTS(nn.Module):
         mx.eval(f5tts.parameters())
 
         return f5tts
-
-    @classmethod
-    def for_training(cls, hf_model_name_or_path: str) -> F5TTS:
-        path = fetch_from_hub(hf_model_name_or_path)
-
-        if path is None:
-            raise ValueError(f"Could not find model {hf_model_name_or_path}")
-
-        # vocab
-
-        vocab_path = path / "vocab.txt"
-        vocab = {v: i for i, v in enumerate(Path(vocab_path).read_text().split("\n"))}
-        if len(vocab) == 0:
-            raise ValueError(f"Could not load vocab from {vocab_path}")
-
-        # model
-
-        f5tts = F5TTS(
-            transformer=DiT(
-                dim=384,
-                depth=16,
-                heads=8,
-                ff_mult=2,
-                text_dim=256,
-                conv_layers=0,
-                text_num_embeds=len(vocab) - 1,
-            ),
-            vocab_char_map=vocab
-        )
-
-        mx.eval(f5tts.parameters())
-
-        return f5tts
