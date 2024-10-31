@@ -217,7 +217,6 @@ def load_dir(dir=None, max_duration=30):
         .sample_transform(lambda s: s if bytes(s["file"]).endswith(b".wav") else dict())
         .sample_transform(_load_transcript)
         .sample_transform(partial(_load_cached_mel_spec, max_duration=max_duration))
-        # .pad_to_multiple("mel_spec", dim=1, pad_multiple=1024, pad_value=0.0)
     )
 
     return dset
