@@ -28,7 +28,7 @@ def generate(
     method: Literal["euler", "midpoint"] = "euler",
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
-    speed: float = 0.8,  # used when duration is None as part of the duration heuristic
+    speed: float = 1.0,  # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--speed",
         type=float,
-        default=0.8,
+        default=1.0,
         help="Speed factor for the duration heuristic",
     )
     parser.add_argument(

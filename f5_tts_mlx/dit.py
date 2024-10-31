@@ -15,12 +15,12 @@ import mlx.nn as nn
 from einops.array_api import repeat
 
 from f5_tts_mlx.modules import (
+    Attention,
+    FeedForward,
     RotaryEmbedding,
     TimestepEmbedding,
     ConvNeXtV2Block,
     ConvPositionEmbedding,
-    DiTBlock,
-    AdaLayerNormZero_Final,
     precompute_freqs_cis,
     get_pos_embed_indices,
 )
@@ -100,6 +100,91 @@ class InputEmbedding(nn.Module):
 
         x = self.proj(mx.concatenate((x, cond, text_embed), axis=-1))
         x = self.conv_pos_embed(x) + x
+        return x
+
+
+# AdaLayerNormZero
+# return with modulated x for attn input, and params for later mlp modulation
+
+
+class AdaLayerNormZero(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(dim, dim * 6)
+        self.norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+
+    def __call__(self, x: mx.array, emb: mx.array | None = None) -> mx.array:
+        emb = self.linear(self.silu(emb))
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mx.split(
+            emb, 6, axis=1
+        )
+
+        x = self.norm(x) * (1 + mx.expand_dims(scale_msa, axis=1)) + mx.expand_dims(
+            shift_msa, axis=1
+        )
+        return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+# AdaLayerNormZero for final layer
+# return only with modulated x for attn input, cuz no more mlp modulation
+
+
+class AdaLayerNormZero_Final(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(dim, dim * 2)
+        self.norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+
+    def __call__(self, x: mx.array, emb: mx.array | None = None) -> mx.array:
+        emb = self.linear(self.silu(emb))
+        scale, shift = mx.split(emb, 2, axis=1)
+
+        x = self.norm(x) * (1 + mx.expand_dims(scale, axis=1)) + mx.expand_dims(
+            shift, axis=1
+        )
+        return x
+
+
+# DiT block
+
+
+class DiTBlock(nn.Module):
+    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.1):
+        super().__init__()
+
+        self.attn_norm = AdaLayerNormZero(dim)
+        self.attn = Attention(
+            dim=dim,
+            heads=heads,
+            dim_head=dim_head,
+            dropout=dropout,
+        )
+
+        self.ff_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
+        self.ff = FeedForward(
+            dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh"
+        )
+
+    def __call__(
+        self, x, t, mask=None, rope=None
+    ):  # x: noised input, t: time embedding
+        # pre-norm & modulation for attention input
+        norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
+
+        # attention
+        attn_output = self.attn(x=norm, mask=mask, rope=rope)
+
+        # process attention output for input x
+        x = x + mx.expand_dims(gate_msa, axis=1) * attn_output
+
+        norm = self.ff_norm(x) * (
+            1 + mx.expand_dims(scale_mlp, axis=1)
+        ) + mx.expand_dims(shift_mlp, axis=1)
+        ff_output = self.ff(norm)
+        x = x + mx.expand_dims(gate_mlp, axis=1) * ff_output
+
         return x
 
 
