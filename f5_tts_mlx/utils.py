@@ -97,10 +97,6 @@ def pad_to_length(t: mx.array, length: int, value=None):
             t = mx.pad(t, [(0, length - seq_len)], constant_values=value)
         elif ndim == 2:
             t = mx.pad(t, [(0, 0), (0, length - seq_len)], constant_values=value)
-        elif ndim == 3:
-            t = mx.pad(
-                t, [(0, 0), (0, length - seq_len), (0, 0)], constant_values=value
-            )
         else:
             raise ValueError(f"Unsupported padding dims: {ndim}")
     return t[..., :length]

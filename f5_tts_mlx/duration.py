@@ -111,7 +111,6 @@ class DurationTransformer(nn.Module):
     ):
         super().__init__()
 
-        self.time_embed = TimestepEmbedding(dim)
         if text_dim is None:
             text_dim = mel_dim
         self.text_embed = TextEmbedding(
@@ -217,6 +216,10 @@ class DurationPredictor(nn.Module):
         # lens and mask
         if not exists(lens):
             lens = mx.full((batch,), seq_len)
+
+        if seq_len < text.shape[1]:
+            seq_len = text.shape[1]
+            inp = mx.pad(inp, [(0, 0), (0, seq_len - inp.shape[1]), (0, 0)])
 
         mask = lens_to_mask(lens, length=seq_len)
 
