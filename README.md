@@ -31,6 +31,8 @@ python -m f5_tts_mlx.generate \
 --ref-text "This is the caption for the reference audio."
 ```
 
+If your output's beginning is cut, make sure to leave at least 1 second of silence at the end of reference audio. Also, the length of input counts as part of the chunk size (30s), so shorter reference audio might be better.
+
 You can convert an audio file to the correct format with ffmpeg like this:
 
 ```bash
