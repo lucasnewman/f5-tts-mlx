@@ -32,7 +32,10 @@ def generate(
     seed: Optional[int] = None,
     output_path: str = "output.wav",
 ):
-    f5tts = F5TTS.from_pretrained(model_name)
+    # the default model already has converted weights
+    convert_weights = model_name != "lucasnewman/f5-tts-mlx"
+    
+    f5tts = F5TTS.from_pretrained(model_name, convert_weights=convert_weights)
 
     if ref_audio_path is None:
         data = pkgutil.get_data("f5_tts_mlx", "tests/test_en_1_ref_short.wav")

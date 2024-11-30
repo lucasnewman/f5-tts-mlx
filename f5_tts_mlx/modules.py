@@ -26,9 +26,7 @@ class RotaryEmbedding(nn.Module):
     ):
         super().__init__()
         base *= base_rescale_factor ** (dim / (dim - 2))
-
-        inv_freq = 1.0 / (base ** (mx.arange(0, dim, 2).astype(mx.float32) / dim))
-        self.inv_freq = inv_freq
+        self.inv_freq = 1.0 / (base ** (mx.arange(0, dim, 2).astype(mx.float32) / dim))
 
         assert interpolation_factor >= 1.0
         self.interpolation_factor = interpolation_factor
@@ -73,8 +71,8 @@ def precompute_freqs_cis(
     freqs = 1.0 / (
         theta ** (mx.arange(0, dim, 2)[: (dim // 2)].astype(mx.float32) / dim)
     )
-    t = mx.arange(end)  # type: ignore
-    freqs = mx.outer(t, freqs).astype(mx.float32)  # type: ignore
+    t = mx.arange(end)
+    freqs = mx.outer(t, freqs).astype(mx.float32)
     freqs_cos = freqs.cos()  # real part
     freqs_sin = freqs.sin()  # imaginary part
     return mx.concatenate([freqs_cos, freqs_sin], axis=-1)
@@ -522,7 +520,7 @@ class Attention(nn.Module):
 
         if attn_mask is not None:
             mask = rearrange(mask, "b n -> b n 1")
-            x = x.masked_fill(~mask, 0.0)
+            x = mx.where(mask, x, 0.0)
 
         return x
 
