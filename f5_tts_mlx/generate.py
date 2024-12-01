@@ -1,21 +1,103 @@
 import argparse
+from collections import deque
 import datetime
 import pkgutil
+import re
+import sys
+from threading import Event, Lock
 from typing import Literal, Optional
 
 import mlx.core as mx
-
 import numpy as np
 
 from f5_tts_mlx.cfm import F5TTS
 from f5_tts_mlx.utils import convert_char_to_pinyin
 
+import sounddevice as sd
 import soundfile as sf
+
+from tqdm import tqdm
 
 SAMPLE_RATE = 24_000
 HOP_LENGTH = 256
 FRAMES_PER_SEC = SAMPLE_RATE / HOP_LENGTH
 TARGET_RMS = 0.1
+
+
+# utilities
+
+
+def split_sentences(text):
+    sentence_endings = re.compile(r"([.!?;:])")
+    sentences = sentence_endings.split(text)
+    sentences = [
+        sentences[i] + sentences[i + 1] for i in range(0, len(sentences) - 1, 2)
+    ]
+    return [sentence.strip() for sentence in sentences if sentence.strip()]
+
+
+# playback
+
+
+class AudioPlayer:
+    def __init__(self, sample_rate=24000, buffer_size=2048):
+        self.sample_rate = sample_rate
+        self.buffer_size = buffer_size
+        self.audio_buffer = deque()
+        self.buffer_lock = Lock()
+        self.playing = False
+        self.drain_event = Event()
+
+    def callback(self, outdata, frames, time, status):
+        with self.buffer_lock:
+            if len(self.audio_buffer) > 0:
+                available = min(frames, len(self.audio_buffer[0]))
+                chunk = self.audio_buffer[0][:available].copy()
+                self.audio_buffer[0] = self.audio_buffer[0][available:]
+
+                if len(self.audio_buffer[0]) == 0:
+                    self.audio_buffer.popleft()
+                    if len(self.audio_buffer) == 0:
+                        self.drain_event.set()
+
+                outdata[:, 0] = np.zeros(frames)
+                outdata[:available, 0] = chunk
+            else:
+                outdata[:, 0] = np.zeros(frames)
+                self.drain_event.set()
+
+    def play(self):
+        if not self.playing:
+            self.stream = sd.OutputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                callback=self.callback,
+                blocksize=self.buffer_size,
+            )
+            self.stream.start()
+            self.playing = True
+            self.drain_event.clear()
+
+    def queue_audio(self, samples):
+        with self.buffer_lock:
+            self.audio_buffer.append(np.array(samples))
+        if not self.playing:
+            self.play()
+
+    def wait_for_drain(self):
+        return self.drain_event.wait()
+
+    def stop(self):
+        if self.playing:
+            self.wait_for_drain()
+            sd.sleep(100)
+            
+            self.stream.stop()
+            self.stream.close()
+            self.playing = False
+
+
+# generation
 
 
 def generate(
@@ -24,17 +106,19 @@ def generate(
     model_name: str = "lucasnewman/f5-tts-mlx",
     ref_audio_path: Optional[str] = None,
     ref_audio_text: Optional[str] = None,
-    steps: int = 32,
-    method: Literal["euler", "midpoint"] = "euler",
+    steps: int = 8,
+    method: Literal["euler", "midpoint"] = "rk4",
     cfg_strength: float = 2.0,
     sway_sampling_coef: float = -1.0,
     speed: float = 1.0,  # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
-    output_path: str = "output.wav",
+    output_path: Optional[str] = None,
 ):
+    player = AudioPlayer(sample_rate=SAMPLE_RATE) if output_path is None else None
+
     # the default model already has converted weights
     convert_weights = model_name != "lucasnewman/f5-tts-mlx"
-    
+
     f5tts = F5TTS.from_pretrained(model_name, convert_weights=convert_weights)
 
     if ref_audio_path is None:
@@ -61,35 +145,91 @@ def generate(
     rms = mx.sqrt(mx.mean(mx.square(audio)))
     if rms < TARGET_RMS:
         audio = audio * TARGET_RMS / rms
+    
+    sentences = split_sentences(generation_text)
+    is_single_generation = len(sentences) == 1 or duration is not None
 
-    # generate the audio for the given text
-    text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
+    if is_single_generation:
+        generation_text = convert_char_to_pinyin(
+            [ref_audio_text + " " + generation_text]
+        )
 
-    start_date = datetime.datetime.now()
+        if duration is not None:
+            duration = int(duration * FRAMES_PER_SEC)
 
-    if duration is not None:
-        duration = int(duration * FRAMES_PER_SEC)
+        start_date = datetime.datetime.now()
 
-    wave, _ = f5tts.sample(
-        mx.expand_dims(audio, axis=0),
-        text=text,
-        duration=duration,
-        steps=steps,
-        method=method,
-        speed=speed,
-        cfg_strength=cfg_strength,
-        sway_sampling_coef=sway_sampling_coef,
-        seed=seed,
-    )
+        wave, _ = f5tts.sample(
+            mx.expand_dims(audio, axis=0),
+            text=generation_text,
+            duration=duration,
+            steps=steps,
+            method=method,
+            speed=speed,
+            cfg_strength=cfg_strength,
+            sway_sampling_coef=sway_sampling_coef,
+            seed=seed,
+        )
 
-    # trim the reference audio
-    wave = wave[audio.shape[0] :]
-    generated_duration = wave.shape[0] / SAMPLE_RATE
-    elapsed_time = datetime.datetime.now() - start_date
+        wave = wave[audio.shape[0] :]
+        mx.eval(wave)
 
-    print(f"Generated {generated_duration:.2f} seconds of audio in {elapsed_time}.")
+        generated_duration = wave.shape[0] / SAMPLE_RATE
+        print(
+            f"Generated {generated_duration:.2f}s of audio in {datetime.datetime.now() - start_date}."
+        )
 
-    sf.write(output_path, np.array(wave), SAMPLE_RATE)
+        if player is not None:
+            player.queue_audio(wave)
+
+        if output_path is not None:
+            sf.write(output_path, np.array(wave), SAMPLE_RATE)
+
+        player.stop()
+    else:
+        start_date = datetime.datetime.now()
+
+        output = []
+
+        for sentence_text in tqdm(split_sentences(generation_text)):
+            text = convert_char_to_pinyin([ref_audio_text + " " + sentence_text])
+
+            if duration is not None:
+                duration = int(duration * FRAMES_PER_SEC)
+
+            wave, _ = f5tts.sample(
+                mx.expand_dims(audio, axis=0),
+                text=text,
+                duration=duration,
+                steps=steps,
+                method=method,
+                speed=speed,
+                cfg_strength=cfg_strength,
+                sway_sampling_coef=sway_sampling_coef,
+                seed=seed,
+            )
+
+            # trim the reference audio
+            wave = wave[audio.shape[0] :]
+            mx.eval(wave)
+
+            output.append(wave)
+
+            if player is not None:
+                mx.eval(wave)
+                player.queue_audio(wave)
+
+        wave = mx.concatenate(output, axis=0)
+
+        generated_duration = wave.shape[0] / SAMPLE_RATE
+        print(
+            f"Generated {generated_duration:.2f}s of audio in {datetime.datetime.now() - start_date}."
+        )
+
+        if output_path is not None:
+            sf.write(output_path, np.array(wave), SAMPLE_RATE)
+
+        player.stop()
 
 
 if __name__ == "__main__":
@@ -104,7 +244,10 @@ if __name__ == "__main__":
         help="Name of the model to use",
     )
     parser.add_argument(
-        "--text", type=str, required=True, help="Text to generate speech from"
+        "--text",
+        type=str,
+        default=None,
+        help="Text to generate speech from (leave blank to input via stdin)",
     )
     parser.add_argument(
         "--duration",
@@ -127,20 +270,20 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output",
         type=str,
-        default="output.wav",
+        default=None,
         help="Path to save the generated audio output",
     )
     parser.add_argument(
         "--steps",
         type=int,
-        default=32,
+        default=8,
         help="Number of steps to take when sampling the neural ODE",
     )
     parser.add_argument(
         "--method",
         type=str,
-        default="euler",
-        choices=["euler", "midpoint"],
+        default="rk4",
+        choices=["euler", "midpoint", "rk4"],
         help="Method to use for sampling the neural ODE",
     )
     parser.add_argument(
@@ -169,6 +312,13 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+
+    if args.text is None:
+        if not sys.stdin.isatty():
+            args.text = sys.stdin.read().strip()
+        else:
+            print("Please enter the text to generate:")
+            args.text = input("> ").strip()
 
     generate(
         generation_text=args.text,

@@ -20,6 +20,7 @@ from huggingface_hub import snapshot_download
 import jieba
 from pypinyin import lazy_pinyin, Style
 
+jieba.setLogLevel(20)
 
 def exists(v):
     return v is not None

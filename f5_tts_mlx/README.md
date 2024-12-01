@@ -40,9 +40,9 @@ Provide a caption for the reference audio.
 
 `--output`
 
-string, default: "output.wav"
+string, default: None
 
-Specify the output path where the generated audio will be saved. If not specified, the script will save the output to a default location.
+Specify the output path where the generated audio will be saved. If not specified, audio will play as it's generated.
 
 `--cfg`
 
@@ -52,13 +52,13 @@ Specifies the strength used for classifier free guidance
 
 `--method`
 
-str, default: "euler"
+str, default: "rk4"
 
-Specify the sampling method for the ODE. Options are "euler" and "midpoint".
+Specify the sampling method for the ODE. Options are "euler", "midpoint", and "rk4".
 
 `--steps`
 
-int, default: 32
+int, default: 8
 
 Specify the number of steps used to sample the neural ODE. Lower steps trade off quality for latency.
 
