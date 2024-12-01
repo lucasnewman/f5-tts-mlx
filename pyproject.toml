@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "f5-tts-mlx"
-version = "0.2.0"
+version = "0.2.1"
 authors = [{name = "Lucas Newman", email = "lucasnewman@me.com"}]
 license = {text = "MIT"}
 description = "F5-TTS - MLX"
@@ -36,7 +36,9 @@ dependencies = [
     "numpy",
     "pypinyin",
     "setuptools",
+    "sounddevice",
     "soundfile",
+    "tqdm",
     "vocos-mlx"
 ]
 
