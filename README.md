@@ -16,11 +16,21 @@ F5 is an evolution of [E2 TTS](https://arxiv.org/abs/2406.18009v2) and improves 
 pip install f5-tts-mlx
 ```
 
-## Usage
+## Basic Usage
 
 ```bash
 python -m f5_tts_mlx.generate --text "The quick brown fox jumped over the lazy dog."
 ```
+
+You can also use a pipe to generate speech from the output of another process, for instance from a language model:
+
+```bash
+mlx_lm.generate --model mlx-community/Llama-3.2-1B-Instruct-4bit --verbose false \
+--prompt "Write a concise paragraph explaning wavelets as used in signal processing." \
+| python -m f5_tts_mlx.generate
+```
+
+## Voice Matching
 
 If you want to use your own reference audio sample, make sure it's a mono, 24kHz wav file of around 5-10 seconds:
 
@@ -39,9 +49,9 @@ ffmpeg -i /path/to/audio.wav -ac 1 -ar 24000 -sample_fmt s16 -t 10 /path/to/outp
 
 See [here](./f5_tts_mlx) for more options to customize generation.
 
-—
+## From Python
 
-You can load a pretrained model from Python like this:
+You can load a pretrained model from Python:
 
 ```python
 from f5_tts_mlx.generate import generate

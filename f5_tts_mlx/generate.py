@@ -185,7 +185,8 @@ def generate(
         if output_path is not None:
             sf.write(output_path, np.array(wave), SAMPLE_RATE)
 
-        player.stop()
+        if player is not None:
+            player.stop()
     else:
         start_date = datetime.datetime.now()
 
@@ -229,7 +230,8 @@ def generate(
         if output_path is not None:
             sf.write(output_path, np.array(wave), SAMPLE_RATE)
 
-        player.stop()
+        if player is not None:
+            player.stop()
 
 
 if __name__ == "__main__":
