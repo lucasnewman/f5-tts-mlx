@@ -26,7 +26,7 @@ You can also use a pipe to generate speech from the output of another process, f
 
 ```bash
 mlx_lm.generate --model mlx-community/Llama-3.2-1B-Instruct-4bit --verbose false \
---prompt "Write a concise paragraph explaning wavelets as used in signal processing." \
+ --temp 0 --max-tokens 512 --prompt "Write a concise paragraph explaning wavelets." \
 | python -m f5_tts_mlx.generate
 ```
 
