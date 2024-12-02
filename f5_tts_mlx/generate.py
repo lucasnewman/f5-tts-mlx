@@ -147,7 +147,7 @@ def generate(
         audio = audio * TARGET_RMS / rms
     
     sentences = split_sentences(generation_text)
-    is_single_generation = len(sentences) == 1 or duration is not None
+    is_single_generation = len(sentences) <= 1 or duration is not None
 
     if is_single_generation:
         generation_text = convert_char_to_pinyin(
