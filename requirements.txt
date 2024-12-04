@@ -6,5 +6,7 @@ mlx
 numpy
 pypinyin
 setuptools
+sounddevice
 soundfile
+tqdm
 vocos-mlx
