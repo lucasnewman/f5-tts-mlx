@@ -1,6 +1,8 @@
 from __future__ import annotations
 import datetime
 from functools import partial
+import os
+from pathlib import Path
 
 from einops.array_api import rearrange
 
@@ -124,7 +126,7 @@ class DurationTrainer:
 
         training_start_date = datetime.datetime.now()
         log_start_date = datetime.datetime.now()
-        
+
         for batch in train_dataset:
             effective_batch_size = batch["transcript"].shape[0]
             text_inputs = [
@@ -132,7 +134,7 @@ class DurationTrainer:
                 for i in range(effective_batch_size)
             ]
 
-            mel_spec = rearrange(mx.array(batch["mel_spec"]), "b 1 n c -> b n c") # .astype(mx.float16)
+            mel_spec = rearrange(mx.array(batch["mel_spec"]), "b 1 n c -> b n c")
             mel_lens = mx.array(batch["mel_len"], dtype=mx.int32)
 
             loss = train_step(mel_spec, text_inputs, mel_lens)
@@ -141,7 +143,11 @@ class DurationTrainer:
 
             if self.log_with_wandb:
                 wandb.log(
-                    {"loss": loss.item(), "lr": self.optimizer.learning_rate.item(), "batch_len": mel_lens.sum().item()},
+                    {
+                        "loss": loss.item(),
+                        "lr": self.optimizer.learning_rate.item(),
+                        "batch_len": mel_lens.sum().item(),
+                    },
                     step=global_step,
                 )
 
@@ -150,7 +156,7 @@ class DurationTrainer:
                 log_start_date = datetime.datetime.now()
 
                 print(
-                    f"step {global_step}: loss = {loss.item():.4f}, sec per step = {(elapsed_time.seconds / log_every):.2f}"
+                    f"step {global_step}: loss = {loss.item():.4f}, sec per step = {(log_every / elapsed_time.seconds):.2f}"
                 )
 
             global_step += 1
@@ -165,6 +171,10 @@ class DurationTrainer:
             wandb.finish()
 
         print(f"Training complete in {datetime.datetime.now() - training_start_date}")
+
+
+SAMPLE_RATE = 24_000
+
 
 class F5TTSTrainer:
     def __init__(
@@ -182,8 +192,11 @@ class F5TTSTrainer:
         self.log_with_wandb = log_with_wandb
 
     def save_checkpoint(self, step, finetune=False):
+        if Path("results").exists() is False:
+            os.makedirs("results")
+
         mx.save_safetensors(
-            f"f5tts_{step}",
+            f"results/f5tts_{step}",
             dict(tree_flatten(self.model.trainable_parameters())),
         )
 
@@ -197,10 +210,9 @@ class F5TTSTrainer:
         train_dataset,
         learning_rate=1e-4,
         weight_decay=1e-2,
-        total_steps=100_000,
-        batch_size=8,
-        log_every=10,
-        save_every=1000,
+        total_steps=1_000_000,
+        log_every=100,
+        save_every=5000,
         checkpoint: int | None = None,
     ):
         if self.log_with_wandb:
@@ -209,7 +221,6 @@ class F5TTSTrainer:
                 config=dict(
                     learning_rate=learning_rate,
                     total_steps=total_steps,
-                    batch_size=batch_size,
                 ),
             )
 
@@ -234,13 +245,14 @@ class F5TTSTrainer:
             start_step = 0
 
         global_step = start_step
+        print(f"Starting training at step {global_step}")
 
         def loss_fn(model: F5TTS, mel_spec, text, lens):
             return model(mel_spec, text=text, lens=lens)
 
-        state = [self.model.state, self.optimizer.state, mx.random.state]
+        # state = [self.model.state, self.optimizer.state, mx.random.state]
 
-        @partial(mx.compile, inputs=state, outputs=state)
+        # @partial(mx.compile, inputs=state, outputs=state)
         def train_step(mel_spec, text_inputs, mel_lens):
             loss_and_grad_fn = nn.value_and_grad(self.model, loss_fn)
             loss, grads = loss_and_grad_fn(
@@ -257,19 +269,22 @@ class F5TTSTrainer:
         training_start_date = datetime.datetime.now()
         log_start_date = datetime.datetime.now()
 
-        for batch in train_dataset:
+        self.model.train()
+
+        for step, batch in enumerate(train_dataset):
             effective_batch_size = batch["transcript"].shape[0]
             text_inputs = [
                 bytes(batch["transcript"][i]).decode("utf-8")
                 for i in range(effective_batch_size)
             ]
+            text_inputs = [text_input.replace("\x00", "") for text_input in text_inputs]
 
             mel_spec = rearrange(mx.array(batch["mel_spec"]), "b 1 n c -> b n c")
             mel_lens = mx.array(batch["mel_len"], dtype=mx.int32)
 
             loss = train_step(mel_spec, text_inputs, mel_lens)
-            mx.eval(state)
-            # mx.eval(self.model.parameters(), self.optimizer.state)
+            # mx.eval(state)
+            mx.eval(self.model.parameters(), self.optimizer.state)
 
             if self.log_with_wandb:
                 wandb.log(
@@ -282,7 +297,7 @@ class F5TTSTrainer:
                 log_start_date = datetime.datetime.now()
 
                 print(
-                    f"step {global_step}: loss = {loss.item():.4f}, sec per step = {(elapsed_time.seconds / log_every):.2f}"
+                    f"step {global_step}: loss = {loss.item():.4f}, steps/s = {(log_every / elapsed_time.seconds):.2f}"
                 )
 
             global_step += 1

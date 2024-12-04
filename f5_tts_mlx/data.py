@@ -1,6 +1,7 @@
 from functools import partial
 import hashlib
 from pathlib import Path
+import tarfile
 
 import mlx.core as mx
 import mlx.data as dx
@@ -18,6 +19,10 @@ from mlx.data.datasets.common import (
 
 from f5_tts_mlx.modules import log_mel_spectrogram
 
+SAMPLE_RATE = 24_000
+HOP_LENGTH = 256
+FRAMES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
+
 # utilities
 
 
@@ -27,7 +32,7 @@ def files_with_extensions(dir: Path, extensions: list = ["wav"]):
         files.extend(list(dir.rglob(f"*.{ext}")))
     files = sorted(files)
 
-    return [{"file": f.as_posix().encode("utf-8")} for f in files]
+    return [{"file": mx.array(f.as_posix().encode("utf-8"))} for f in files]
 
 
 # transforms
@@ -35,6 +40,9 @@ def files_with_extensions(dir: Path, extensions: list = ["wav"]):
 
 def _load_transcript_file(sample):
     audio_file = Path(bytes(sample["file"]).decode("utf-8"))
+    if not audio_file.suffix == ".wav":
+        return dict()
+
     transcript_file = audio_file.with_suffix(".normalized.txt")
     sample["transcript_file"] = transcript_file.as_posix().encode("utf-8")
     return sample
@@ -42,6 +50,9 @@ def _load_transcript_file(sample):
 
 def _load_transcript(sample):
     audio_file = Path(bytes(sample["file"]).decode("utf-8"))
+    if not audio_file.suffix == ".wav":
+        return dict()
+
     transcript_file = audio_file.with_suffix(".normalized.txt")
     if not transcript_file.exists():
         return dict()
@@ -50,6 +61,7 @@ def _load_transcript(sample):
         list(transcript_file.read_text().strip().encode("utf-8")), dtype=np.int8
     )
     sample["transcript"] = transcript
+
     return sample
 
 
@@ -59,7 +71,7 @@ def _load_cached_mel_spec(sample, max_duration=5):
     mel_spec = mx.load(mel_file.as_posix())["arr_0"]
     mel_len = mel_spec.shape[1]
 
-    if mel_len > int(max_duration * 93.75):
+    if mel_len > int(max_duration * FRAMES_PER_SECOND):
         return dict()
 
     sample["mel_spec"] = mel_spec
@@ -70,23 +82,21 @@ def _load_cached_mel_spec(sample, max_duration=5):
 
 def _load_audio_file(sample):
     audio_file = Path(bytes(sample["file"]).decode("utf-8"))
-    audio = np.array(list(audio_file.read_bytes()), dtype=np.int8)
+    audio = np.array(list(audio_file.read_bytes()), dtype=np.uint8)
     sample["audio"] = audio
     return sample
 
 
-def _to_mel_spec(sample):
+def _to_mel_spec(sample, max_duration=10):
     audio = rearrange(mx.array(sample["audio"]), "t 1 -> t")
+    mel_len = audio.shape[0] // HOP_LENGTH
+
+    if mel_len > int(max_duration * FRAMES_PER_SECOND):
+        return dict()
+
     mel_spec = log_mel_spectrogram(audio)
     sample["mel_spec"] = mel_spec
     sample["mel_len"] = mel_spec.shape[1]
-    return sample
-
-
-def _with_max_duration(sample, sample_rate=24_000, max_duration=30):
-    audio_duration = sample["audio"].shape[0] / sample_rate
-    if audio_duration > max_duration:
-        return dict()
     return sample
 
 
@@ -188,18 +198,24 @@ def load_libritts_r(
     target = load_libritts_r_tarfile(
         root=root, split=split, quiet=quiet, validate_download=validate_download
     )
-    target = str(target)
+
+    path = Path(target.parent) / "LibriTTS_R" / split
+
+    tar = tarfile.open(target)
+    tar.extractall(path=target.parent)
+    tar.close()
+
+    files = files_with_extensions(path)
+    print(f"Found {len(files)} files at {path}")
 
     dset = (
-        dx.files_from_tar(target)
+        dx.buffer_from_vector(files)
         .to_stream()
         .sample_transform(lambda s: s if bytes(s["file"]).endswith(b".wav") else dict())
-        .sample_transform(_load_transcript_file)
-        .read_from_tar(target, "transcript_file", "transcript")
-        .read_from_tar(target, "file", "audio")
+        .sample_transform(_load_transcript)
+        .sample_transform(_load_audio_file)
         .load_audio("audio", from_memory=True)
-        .sample_transform(partial(_with_max_duration, max_duration=max_duration))
-        .sample_transform(_to_mel_spec)
+        .sample_transform(partial(_to_mel_spec, max_duration=max_duration))
     )
 
     return dset
