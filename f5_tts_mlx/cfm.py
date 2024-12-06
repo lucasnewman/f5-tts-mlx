@@ -9,7 +9,6 @@ d - dimension
 
 from __future__ import annotations
 from pathlib import Path
-from random import random
 from typing import Callable, Literal
 
 import mlx.core as mx
@@ -19,9 +18,9 @@ from einops.array_api import rearrange, repeat
 
 from vocos_mlx import Vocos
 
+from f5_tts_mlx.audio import MelSpec
 from f5_tts_mlx.duration import DurationPredictor, DurationTransformer
 from f5_tts_mlx.dit import DiT
-from f5_tts_mlx.modules import MelSpec
 from f5_tts_mlx.utils import (
     exists,
     fetch_from_hub,
@@ -32,7 +31,6 @@ from f5_tts_mlx.utils import (
     mask_from_frac_lengths,
     pad_sequence,
 )
-
 
 # ode solvers
 
@@ -131,7 +129,6 @@ class F5TTS(nn.Module):
     def __init__(
         self,
         transformer: nn.Module,
-        sigma=0.0,
         audio_drop_prob=0.3,
         cond_drop_prob=0.2,
         num_channels=None,
@@ -160,9 +157,6 @@ class F5TTS(nn.Module):
         dim = transformer.dim
         self.dim = dim
 
-        # conditional flow related
-        self.sigma = sigma
-
         # vocab map for tokenization
         self._vocab_char_map = vocab_char_map
 
@@ -178,15 +172,15 @@ class F5TTS(nn.Module):
         text: mx.array["b nt"] | list[str],
         *,
         lens: mx.array["b"] | None = None,
-    ) -> tuple[mx.array, mx.array, mx.array]:
+    ) -> mx.array:
         # handle raw wave
         if inp.ndim == 2:
             inp = self._mel_spec(inp)
             inp = rearrange(inp, "b d n -> b n d")
             assert inp.shape[-1] == self.num_channels
 
-        batch, seq_len, dtype, σ1 = *inp.shape[:2], inp.dtype, self.sigma
-
+        batch, seq_len, dtype = *inp.shape[:2], inp.dtype
+        
         # handle text as string
         if isinstance(text, list):
             if exists(self._vocab_char_map):
@@ -230,15 +224,13 @@ class F5TTS(nn.Module):
         )
 
         # transformer and cfg training with a drop rate
-        drop_audio_cond = random() < self.audio_drop_prob  # p_drop in voicebox paper
-        if random() < self.cond_drop_prob:
-            drop_audio_cond = True
-            drop_text = True
-        else:
-            drop_text = False
 
-        # if want rigourously mask out padding, record in collate_fn in dataset.py, and pass in here
-        # adding mask will use more memory, thus also need to adjust batchsampler with scaled down threshold for long sequences
+        rand_audio_drop = mx.random.uniform(0, 1, (1,))
+        rand_cond_drop = mx.random.uniform(0, 1, (1,))
+        drop_audio_cond = rand_audio_drop < self.audio_drop_prob
+        drop_text = rand_cond_drop < self.cond_drop_prob
+        drop_audio_cond = drop_audio_cond | drop_text
+        
         pred = self.transformer(
             x=φ,
             cond=cond,
@@ -249,6 +241,7 @@ class F5TTS(nn.Module):
         )
 
         # flow matching loss
+        
         loss = nn.losses.mse_loss(pred, flow, reduction="none")
 
         rand_span_mask = repeat(rand_span_mask, "b n -> b n d", d=self.num_channels)

@@ -8,22 +8,184 @@ d - dimension
 """
 
 from __future__ import annotations
+import math
 
 import mlx.core as mx
 import mlx.nn as nn
 
-from einops.array_api import repeat
+from einops.array_api import rearrange, repeat
 
-from f5_tts_mlx.modules import (
-    Attention,
-    FeedForward,
+from f5_tts_mlx.convnext_v2 import ConvNeXtV2Block
+from f5_tts_mlx.rope import (
     RotaryEmbedding,
-    TimestepEmbedding,
-    ConvNeXtV2Block,
-    ConvPositionEmbedding,
-    precompute_freqs_cis,
+    apply_rotary_pos_emb,
     get_pos_embed_indices,
+    precompute_freqs_cis,
 )
+
+# convolutional position embedding
+
+
+class ConvPositionEmbedding(nn.Module):
+    def __init__(self, dim, kernel_size=31, groups=16):
+        super().__init__()
+        assert kernel_size % 2 != 0
+        self.conv1d = nn.Sequential(
+            nn.Conv1d(dim, dim, kernel_size, groups=groups, padding=kernel_size // 2),
+            nn.Mish(),
+            nn.Conv1d(dim, dim, kernel_size, groups=groups, padding=kernel_size // 2),
+            nn.Mish(),
+        )
+
+    def __call__(self, x: mx.array, mask: mx.array | None = None) -> mx.array:
+        if mask is not None:
+            mask = mask[..., None]
+            x = x * mask
+
+        out = self.conv1d(x)
+
+        if mask is not None:
+            out = out * mask
+
+        return out
+
+
+# sinusoidal position embedding
+
+
+class SinusPositionEmbedding(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+    def __call__(self, x, scale=1000):
+        half_dim = self.dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = mx.exp(mx.arange(half_dim) * -emb)
+        emb = scale * mx.expand_dims(x, axis=1) * mx.expand_dims(emb, axis=0)
+        emb = mx.concatenate([emb.sin(), emb.cos()], axis=-1)
+        return emb
+
+
+# time step conditioning embedding
+
+
+class TimestepEmbedding(nn.Module):
+    def __init__(self, dim, freq_embed_dim=256):
+        super().__init__()
+        self.time_embed = SinusPositionEmbedding(freq_embed_dim)
+        self.time_mlp = nn.Sequential(
+            nn.Linear(freq_embed_dim, dim), nn.SiLU(), nn.Linear(dim, dim)
+        )
+
+    def __call__(self, timestep: mx.array) -> mx.array:
+        time_hidden = self.time_embed(timestep)
+        time = self.time_mlp(time_hidden)
+        return time
+
+
+# feed forward
+
+
+class FeedForward(nn.Module):
+    def __init__(
+        self, dim, dim_out=None, mult=4, dropout=0.0, approximate: str = "none"
+    ):
+        super().__init__()
+        inner_dim = int(dim * mult)
+        dim_out = dim_out if dim_out is not None else dim
+
+        activation = nn.GELU(approx=approximate)
+        project_in = nn.Sequential(nn.Linear(dim, inner_dim), activation)
+        self.ff = nn.Sequential(
+            project_in, nn.Dropout(dropout), nn.Linear(inner_dim, dim_out)
+        )
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.ff(x)
+
+
+# attention
+
+
+class Attention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        heads: int = 8,
+        dim_head: int = 64,
+        dropout: float = 0.0,
+    ):
+        super().__init__()
+
+        self.dim = dim
+        self.heads = heads
+        self.inner_dim = dim_head * heads
+        self.dropout = dropout
+
+        self.to_q = nn.Linear(dim, self.inner_dim)
+        self.to_k = nn.Linear(dim, self.inner_dim)
+        self.to_v = nn.Linear(dim, self.inner_dim)
+
+        self.to_out = nn.Sequential(nn.Linear(self.inner_dim, dim), nn.Dropout(dropout))
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask: mx.array | None = None,
+        rope: mx.array | None = None,
+    ) -> mx.array:
+        batch, seq_len, _ = x.shape
+
+        # `sample` projections.
+        query = self.to_q(x)
+        key = self.to_k(x)
+        value = self.to_v(x)
+
+        # apply rotary position embedding
+        if rope is not None:
+            freqs, xpos_scale = rope
+            q_xpos_scale, k_xpos_scale = (
+                (
+                    xpos_scale,
+                    xpos_scale**-1.0,
+                )
+                if xpos_scale is not None
+                else (1.0, 1.0)
+            )
+
+            query = apply_rotary_pos_emb(query, freqs, q_xpos_scale)
+            key = apply_rotary_pos_emb(key, freqs, k_xpos_scale)
+
+        # attention
+        query = rearrange(query, "b n (h d) -> b h n d", h=self.heads)
+        key = rearrange(key, "b n (h d) -> b h n d", h=self.heads)
+        value = rearrange(value, "b n (h d) -> b h n d", h=self.heads)
+
+        # mask. e.g. inference got a batch with different target durations, mask out the padding
+        if mask is not None:
+            attn_mask = mask
+            attn_mask = rearrange(attn_mask, "b n -> b () () n")
+            attn_mask = repeat(attn_mask, "b () () n -> b h () n", h=self.heads)
+        else:
+            attn_mask = None
+
+        scale_factor = 1 / mx.sqrt(query.shape[-1])
+
+        x = mx.fast.scaled_dot_product_attention(
+            q=query, k=key, v=value, scale=scale_factor, mask=attn_mask
+        )
+        x = x.transpose(0, 2, 1, 3).reshape(batch, seq_len, -1).astype(query.dtype)
+
+        # linear proj
+        x = self.to_out(x)
+
+        if attn_mask is not None:
+            mask = rearrange(mask, "b n -> b n 1")
+            x = mx.where(mask, x, 0.0)
+
+        return x
+
 
 # Text embedding
 
@@ -48,22 +210,21 @@ class TextEmbedding(nn.Module):
         else:
             self.extra_modeling = False
 
-    def __call__(self, text: int["b nt"], seq_len, drop_text=False):
+    def __call__(self, text, seq_len, drop_text=False):
         batch, text_len = text.shape[0], text.shape[1]
-        text = (
-            text + 1
-        )  # use 0 as filler token. preprocess of batch pad -1, see list_str_to_idx()
-        text = text[
-            :, :seq_len
-        ]  # curtail if character tokens are more than the mel spec tokens
+
+        # use 0 as filler token. we rely on text being padded with -1 values.
+        text = text + 1
+
+        # curtail if character tokens are more than the mel spec tokens
+        text = text[:, :seq_len]
+
         text = mx.pad(text, [(0, 0), (0, seq_len - text_len)], constant_values=0)
 
-        if drop_text:  # cfg for text
-            text = mx.zeros_like(text)
-
+        # cfg for text
+        text = mx.where(drop_text, mx.zeros_like(text), text)
         text = self.text_embed(text)  # b n -> b n d
 
-        # possible extra modeling
         if self.extra_modeling:
             # sinus pos emb
             batch_start = mx.zeros((batch,), dtype=mx.int32)
@@ -73,7 +234,7 @@ class TextEmbedding(nn.Module):
             text_pos_embed = self._freqs_cis[pos_idx]
             text = text + text_pos_embed
 
-            # convnextv2 blocks
+            # convnext v2 blocks
             text = self.text_blocks(text)
 
         return text
@@ -90,14 +251,13 @@ class InputEmbedding(nn.Module):
 
     def __call__(
         self,
-        x: float["b n d"],
-        cond: float["b n d"],
-        text_embed: float["b n d"],
+        x: mx.array,  # b n d
+        cond: mx.array,  # b n d
+        text_embed: mx.array,  # b n d
         drop_audio_cond=False,
     ):
-        if drop_audio_cond:  # cfg for cond audio
-            cond = mx.zeros_like(cond)
-
+        # cfg for cond audio
+        cond = mx.where(drop_audio_cond, mx.zeros_like(cond), cond)
         x = self.proj(mx.concatenate((x, cond, text_embed), axis=-1))
         x = self.conv_pos_embed(x) + x
         return x
@@ -205,18 +365,17 @@ class DiT(nn.Module):
         text_num_embeds=256,
         text_dim=None,
         conv_layers=0,
-        long_skip_connection=False,
     ):
         super().__init__()
 
-        self.time_embed = TimestepEmbedding(dim)
         if text_dim is None:
             text_dim = mel_dim
+
+        self.time_embed = TimestepEmbedding(dim)
         self.text_embed = TextEmbedding(
             text_num_embeds, text_dim, conv_layers=conv_layers
         )
         self.input_embed = InputEmbedding(mel_dim, text_dim, dim)
-
         self.rotary_embed = RotaryEmbedding(dim_head)
 
         self.dim = dim
@@ -232,22 +391,19 @@ class DiT(nn.Module):
             )
             for _ in range(depth)
         ]
-        self.long_skip_connection = (
-            nn.Linear(dim * 2, dim, bias=False) if long_skip_connection else None
-        )
 
         self.norm_out = AdaLayerNormZero_Final(dim)  # final modulation
         self.proj_out = nn.Linear(dim, mel_dim)
 
     def __call__(
         self,
-        x: float["b n d"],  # nosied input audio
-        cond: float["b n d"],  # masked cond audio
-        text: int["b nt"],  # text
-        time: float["b"] | float[""],  # time step
+        x: mx.array,  # b n d, nosied input audio
+        cond: mx.array,  # b n d, masked cond audio
+        text: mx.array,  # b nt, text
+        time: mx.array,  # b, time step
         drop_audio_cond,  # cfg for cond audio
         drop_text,  # cfg for text
-        mask: bool["b n"] | None = None,
+        mask: mx.array | None = None,  # b n
     ):
         batch, seq_len = x.shape[0], x.shape[1]
         if time.ndim == 0:
@@ -260,14 +416,8 @@ class DiT(nn.Module):
 
         rope = self.rotary_embed.forward_from_seq_len(seq_len)
 
-        if self.long_skip_connection is not None:
-            residual = x
-
         for block in self.transformer_blocks:
             x = block(x, t, mask=mask, rope=rope)
-
-        if self.long_skip_connection is not None:
-            x = self.long_skip_connection(mx.concatenate((x, residual), axis=-1))
 
         x = self.norm_out(x, t)
         output = self.proj_out(x)

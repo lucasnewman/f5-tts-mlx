@@ -15,8 +15,9 @@ import mlx.nn as nn
 from einops.array_api import rearrange, repeat
 import einx
 
-from f5_tts_mlx.dit import TextEmbedding, ConvPositionEmbedding
-from f5_tts_mlx.modules import Attention, FeedForward, MelSpec, RotaryEmbedding
+from f5_tts_mlx.audio import MelSpec
+from f5_tts_mlx.dit import TextEmbedding, ConvPositionEmbedding, Attention, FeedForward
+from f5_tts_mlx.rope import RotaryEmbedding
 from f5_tts_mlx.utils import (
     exists,
     default,
