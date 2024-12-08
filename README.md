@@ -36,8 +36,8 @@ If you want to use your own reference audio sample, make sure it's a mono, 24kHz
 
 ```bash
 python -m f5_tts_mlx.generate \
---text "The quick brown fox jumped over the lazy dog."
---ref-audio /path/to/audio.wav
+--text "The quick brown fox jumped over the lazy dog." \
+--ref-audio /path/to/audio.wav \
 --ref-text "This is the caption for the reference audio."
 ```
 
