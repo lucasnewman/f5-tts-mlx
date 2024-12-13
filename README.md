@@ -49,6 +49,14 @@ ffmpeg -i /path/to/audio.wav -ac 1 -ar 24000 -sample_fmt s16 -t 10 /path/to/outp
 
 See [here](./f5_tts_mlx) for more options to customize generation.
 
+## Quantized Models
+
+If you're in a bandwidth or memory-limited environment, you can use the `--q` option to load a quantized version of the model. 4-bit and 8-bit variants are supported.
+
+```bash
+python -m f5_tts_mlx.generate --text "The quick brown fox jumped over the lazy dog." --q 4
+```
+
 ## From Python
 
 You can load a pretrained model from Python:
