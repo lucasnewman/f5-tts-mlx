@@ -9,6 +9,7 @@ d - dimension
 
 from __future__ import annotations
 from pathlib import Path
+from typing import Optional
 
 import mlx.core as mx
 
@@ -182,11 +183,17 @@ def convert_char_to_pinyin(text_list, polyphone=True):
 # fetch model from hub
 
 
-def fetch_from_hub(hf_repo: str) -> Path:
+def fetch_from_hub(hf_repo: str, quantization_bits: Optional[int] = None) -> Path:
+    model_filename = "model.safetensors"
+    if exists(quantization_bits):
+        model_filename = f"model_{quantization_bits}b.safetensors"
+    
+    duration_predictor_path = "duration_v2.safetensors"
+    
     model_path = Path(
         snapshot_download(
             repo_id=hf_repo,
-            allow_patterns=["*.safetensors", "*.txt"],
+            allow_patterns=[model_filename, duration_predictor_path, "*.txt"],
         )
     )
     return model_path

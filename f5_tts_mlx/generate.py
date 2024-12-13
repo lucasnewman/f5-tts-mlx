@@ -112,6 +112,7 @@ def generate(
     sway_sampling_coef: float = -1.0,
     speed: float = 1.0,  # used when duration is None as part of the duration heuristic
     seed: Optional[int] = None,
+    quantization_bits: Optional[int] = None,
     output_path: Optional[str] = None,
 ):
     player = AudioPlayer(sample_rate=SAMPLE_RATE) if output_path is None else None
@@ -119,7 +120,7 @@ def generate(
     # the default model already has converted weights
     convert_weights = model_name != "lucasnewman/f5-tts-mlx"
 
-    f5tts = F5TTS.from_pretrained(model_name, convert_weights=convert_weights)
+    f5tts = F5TTS.from_pretrained(model_name, convert_weights=convert_weights, quantization_bits=quantization_bits)
 
     if ref_audio_path is None:
         data = pkgutil.get_data("f5_tts_mlx", "tests/test_en_1_ref_short.wav")
@@ -312,6 +313,12 @@ if __name__ == "__main__":
         default=None,
         help="Seed for noise generation",
     )
+    parser.add_argument(
+        "--q",
+        type=int,
+        default=None,
+        help="Number of bits to use for quantization. 4 and 8 are supported.",
+    )
 
     args = parser.parse_args()
 
@@ -334,5 +341,6 @@ if __name__ == "__main__":
         sway_sampling_coef=args.sway_coef,
         speed=args.speed,
         seed=args.seed,
+        quantization_bits=args.q,
         output_path=args.output,
     )

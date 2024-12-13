@@ -180,7 +180,7 @@ class F5TTS(nn.Module):
             assert inp.shape[-1] == self.num_channels
 
         batch, seq_len, dtype = *inp.shape[:2], inp.dtype
-        
+
         # handle text as string
         if isinstance(text, list):
             if exists(self._vocab_char_map):
@@ -230,7 +230,7 @@ class F5TTS(nn.Module):
         drop_audio_cond = rand_audio_drop < self.audio_drop_prob
         drop_text = rand_cond_drop < self.cond_drop_prob
         drop_audio_cond = drop_audio_cond | drop_text
-        
+
         pred = self.transformer(
             x=φ,
             cond=cond,
@@ -241,7 +241,7 @@ class F5TTS(nn.Module):
         )
 
         # flow matching loss
-        
+
         loss = nn.losses.mse_loss(pred, flow, reduction="none")
 
         rand_span_mask = repeat(rand_span_mask, "b n -> b n d", d=self.num_channels)
@@ -405,9 +405,14 @@ class F5TTS(nn.Module):
 
     @classmethod
     def from_pretrained(
-        cls, hf_model_name_or_path: str, convert_weights=False
+        cls,
+        hf_model_name_or_path: str,
+        convert_weights = False,
+        quantization_bits: int | None = None,
     ) -> F5TTS:
-        path = fetch_from_hub(hf_model_name_or_path)
+        path = fetch_from_hub(
+            hf_model_name_or_path, quantization_bits=quantization_bits
+        )
 
         if path is None:
             raise ValueError(f"Could not find model {hf_model_name_or_path}")
@@ -446,7 +451,11 @@ class F5TTS(nn.Module):
 
         # model
 
-        model_path = path / "model.safetensors"
+        model_filename = "model.safetensors"
+        if exists(quantization_bits):
+            model_filename = f"model_{quantization_bits}b.safetensors"
+
+        model_path = path / model_filename
 
         f5tts = F5TTS(
             transformer=DiT(
@@ -497,6 +506,15 @@ class F5TTS(nn.Module):
                 new_weights[k] = v
 
             weights = new_weights
+
+        if quantization_bits is not None:
+            nn.quantize(
+                f5tts,
+                bits=quantization_bits,
+                class_predicate=lambda p, m: (
+                    isinstance(m, nn.Linear) and m.weight.shape[1] % 64 == 0
+                ),
+            )
 
         f5tts.load_weights(list(weights.items()))
         mx.eval(f5tts.parameters())
