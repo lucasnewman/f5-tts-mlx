@@ -73,3 +73,9 @@ Set the sway sampling coefficient. The best values according to the paper are in
 int, default: None (random)
 
 Set a random seed for reproducible results.
+
+`--q`
+
+int, default: None
+
+Number of bits to use for quantization. 4 and 8 are supported.
