@@ -40,7 +40,7 @@ def lens_to_mask(
     length: int | None = None,
 ) -> mx.array:  # Bool['b n']
     if not exists(length):
-        length = t.max()
+        length = t.max().item()
 
     seq = mx.arange(length)
     return einx.less("n, b -> b n", seq, t)
