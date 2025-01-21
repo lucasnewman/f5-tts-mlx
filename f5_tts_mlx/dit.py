@@ -13,7 +13,7 @@ import math
 import mlx.core as mx
 import mlx.nn as nn
 
-from einops.array_api import rearrange, repeat
+from einops.array_api import repeat
 
 from f5_tts_mlx.convnext_v2 import ConvNeXtV2Block
 from f5_tts_mlx.rope import (
@@ -126,6 +126,7 @@ class Attention(nn.Module):
         self.to_q = nn.Linear(dim, self.inner_dim)
         self.to_k = nn.Linear(dim, self.inner_dim)
         self.to_v = nn.Linear(dim, self.inner_dim)
+        self._scale_factor = 1 / mx.sqrt(dim_head)
 
         self.to_out = nn.Sequential(nn.Linear(self.inner_dim, dim), nn.Dropout(dropout))
 
@@ -158,22 +159,18 @@ class Attention(nn.Module):
             key = apply_rotary_pos_emb(key, freqs, k_xpos_scale)
 
         # attention
-        query = rearrange(query, "b n (h d) -> b h n d", h=self.heads)
-        key = rearrange(key, "b n (h d) -> b h n d", h=self.heads)
-        value = rearrange(value, "b n (h d) -> b h n d", h=self.heads)
+        query = query.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
+        key = key.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
+        value = value.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
 
         # mask. e.g. inference got a batch with different target durations, mask out the padding
         if mask is not None:
-            attn_mask = mask
-            attn_mask = rearrange(attn_mask, "b n -> b () () n")
-            attn_mask = repeat(attn_mask, "b () () n -> b h () n", h=self.heads)
+            attn_mask = mask[:, None, None, :].expand(batch, self.heads, 1, seq_len)
         else:
             attn_mask = None
 
-        scale_factor = 1 / mx.sqrt(query.shape[-1])
-
         x = mx.fast.scaled_dot_product_attention(
-            q=query, k=key, v=value, scale=scale_factor, mask=attn_mask
+            q=query, k=key, v=value, scale=self._scale_factor, mask=attn_mask
         )
         x = x.transpose(0, 2, 1, 3).reshape(batch, seq_len, -1).astype(query.dtype)
 
@@ -181,8 +178,7 @@ class Attention(nn.Module):
         x = self.to_out(x)
 
         if attn_mask is not None:
-            mask = rearrange(mask, "b n -> b n 1")
-            x = mx.where(mask, x, 0.0)
+            x = x * mask[:, :, None]
 
         return x
 
@@ -311,7 +307,7 @@ class AdaLayerNormZero_Final(nn.Module):
 
 
 class DiTBlock(nn.Module):
-    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.1):
+    def __init__(self, dim, heads, dim_head, ff_mult=4, dropout=0.0):
         super().__init__()
 
         self.attn_norm = AdaLayerNormZero(dim)

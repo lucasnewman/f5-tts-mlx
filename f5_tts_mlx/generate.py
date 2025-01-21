@@ -79,6 +79,8 @@ class AudioPlayer:
             self.drain_event.clear()
 
     def queue_audio(self, samples):
+        self.drain_event.clear()
+        
         with self.buffer_lock:
             self.audio_buffer.append(np.array(samples))
         if not self.playing:
@@ -99,10 +101,19 @@ class AudioPlayer:
 
 # generation
 
+def estimated_duration(ref_audio: mx.array, ref_text: str, gen_text: str, speed: float = 1.0):
+    ref_audio_len = ref_audio.shape[0] // HOP_LENGTH
+    zh_pause_punc = r"。，、；：？！"
+    ref_text_len = len(ref_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, ref_text))
+    gen_text_len = len(gen_text.encode('utf-8')) + 3 * len(re.findall(zh_pause_punc, gen_text))
+    duration_in_frames = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
+    print(f"Got estimated duration: {duration_in_frames / FRAMES_PER_SEC}")
+    return duration_in_frames / FRAMES_PER_SEC
 
 def generate(
     generation_text: str,
     duration: Optional[float] = None,
+    estimate_duration: bool = False,
     model_name: str = "lucasnewman/f5-tts-mlx",
     ref_audio_path: Optional[str] = None,
     ref_audio_text: Optional[str] = None,
@@ -151,12 +162,12 @@ def generate(
     is_single_generation = len(sentences) <= 1 or duration is not None
 
     if is_single_generation:
-        generation_text = convert_char_to_pinyin(
-            [ref_audio_text + " " + generation_text]
-        )
-
         if duration is not None:
             duration = int(duration * FRAMES_PER_SEC)
+        elif estimate_duration:
+            duration = int(estimated_duration(audio, ref_audio_text, generation_text, speed) * FRAMES_PER_SEC)
+
+        generation_text = convert_char_to_pinyin([ref_audio_text + " " + generation_text])
 
         start_date = datetime.datetime.now()
 
@@ -194,10 +205,12 @@ def generate(
         output = []
 
         for sentence_text in tqdm(split_sentences(generation_text)):
-            text = convert_char_to_pinyin([ref_audio_text + " " + sentence_text])
-
             if duration is not None:
                 duration = int(duration * FRAMES_PER_SEC)
+            elif estimate_duration:
+                duration = int(estimated_duration(audio, ref_audio_text, generation_text, speed) * FRAMES_PER_SEC)
+
+            text = convert_char_to_pinyin([ref_audio_text + " " + sentence_text])
 
             wave, _ = f5tts.sample(
                 mx.expand_dims(audio, axis=0),
@@ -218,7 +231,6 @@ def generate(
             output.append(wave)
 
             if player is not None:
-                mx.eval(wave)
                 player.queue_audio(wave)
 
         wave = mx.concatenate(output, axis=0)
@@ -257,6 +269,12 @@ if __name__ == "__main__":
         type=float,
         default=None,
         help="Duration of the generated audio in seconds",
+    )
+    parser.add_argument(
+        "--estimate-duration",
+        type=bool,
+        default=False,
+        help="If true, estimate the duration using a heuristic based on the text instead of the duration predictor model.",
     )
     parser.add_argument(
         "--ref-audio",
@@ -332,6 +350,7 @@ if __name__ == "__main__":
     generate(
         generation_text=args.text,
         duration=args.duration,
+        estimate_duration=args.estimate_duration,
         model_name=args.model,
         ref_audio_path=args.ref_audio,
         ref_audio_text=args.ref_text,
