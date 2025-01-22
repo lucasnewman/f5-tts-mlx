@@ -14,6 +14,12 @@ float
 
 Specify the length of the generated audio in seconds.
 
+`--estimate-duration`
+
+bool, default: false
+
+If true, estimate the duration using a heuristic based on the text instead of the duration predictor model.
+
 `--speed`
 
 float, default: 1.0
