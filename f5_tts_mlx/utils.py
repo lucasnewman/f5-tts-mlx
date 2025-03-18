@@ -23,6 +23,7 @@ from pypinyin import lazy_pinyin, Style
 
 jieba.setLogLevel(20)
 
+
 def exists(v):
     return v is not None
 
@@ -52,11 +53,9 @@ def mask_from_start_end_indices(
     end: mx.array,
     max_length: int | None = None,
 ):
-    max_seq_len = max_length # default(max_length, seq_len.max().item())
+    max_seq_len = max_length  # default(max_length, seq_len.max().item())
     seq = mx.arange(max_seq_len).astype(mx.int32)
-    return einx.greater_equal("n, b -> b n", seq, start) & einx.less(
-        "n, b -> b n", seq, end
-    )
+    return einx.greater_equal("n, b -> b n", seq, start) & einx.less("n, b -> b n", seq, end)
 
 
 def mask_from_frac_lengths(
@@ -127,9 +126,7 @@ def list_str_to_idx(
     vocab_char_map: dict[str, int],  # {char: idx}
     padding_value=-1,
 ) -> mx.array:  # Int['b nt']:
-    list_idx_tensors = [
-        [vocab_char_map.get(c, 0) for c in t] for t in text
-    ]  # pinyin or char style
+    list_idx_tensors = [[vocab_char_map.get(c, 0) for c in t] for t in text]  # pinyin or char style
 
     list_idx_tensors = [mx.array(t) for t in list_idx_tensors]
     text = pad_sequence(list_idx_tensors, padding_value=padding_value)
@@ -155,9 +152,7 @@ def convert_char_to_pinyin(text_list, polyphone=True):
                 if char_list and seg_byte_len > 1 and char_list[-1] not in " :'\"":
                     char_list.append(" ")
                 char_list.extend(seg)
-            elif polyphone and seg_byte_len == 3 * len(
-                seg
-            ):  # if pure chinese characters
+            elif polyphone and seg_byte_len == 3 * len(seg):  # if pure chinese characters
                 seg = lazy_pinyin(seg, style=Style.TONE3, tone_sandhi=True)
                 for c in seg:
                     if c not in "。，、；：？！《》【】—…":
@@ -170,9 +165,7 @@ def convert_char_to_pinyin(text_list, polyphone=True):
                     else:
                         if c not in "。，、；：？！《》【】—…":
                             char_list.append(" ")
-                            char_list.extend(
-                                lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True)
-                            )
+                            char_list.extend(lazy_pinyin(c, style=Style.TONE3, tone_sandhi=True))
                         else:  # if is zh punc
                             char_list.append(c)
         final_text_list.append(char_list)
@@ -184,12 +177,12 @@ def convert_char_to_pinyin(text_list, polyphone=True):
 
 
 def fetch_from_hub(hf_repo: str, quantization_bits: Optional[int] = None) -> Path:
-    model_filename = "model.safetensors"
+    model_filename = "model_v1.safetensors"
     if exists(quantization_bits):
-        model_filename = f"model_{quantization_bits}b.safetensors"
-    
+        model_filename = f"model_v1_{quantization_bits}b.safetensors"
+
     duration_predictor_path = "duration_v2.safetensors"
-    
+
     model_path = Path(
         snapshot_download(
             repo_id=hf_repo,

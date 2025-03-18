@@ -307,9 +307,7 @@ class F5TTS(nn.Module):
         if duration is None and self._duration_predictor is not None:
             duration = self.predict_duration(cond, text, speed)
         elif duration is None:
-            raise ValueError(
-                "Duration must be provided or a duration predictor must be set."
-            )
+            raise ValueError("Duration must be provided or a duration predictor must be set.")
 
         cond_mask = lens_to_mask(lens)
 
@@ -407,12 +405,10 @@ class F5TTS(nn.Module):
     def from_pretrained(
         cls,
         hf_model_name_or_path: str,
-        convert_weights = False,
+        convert_weights=True,
         quantization_bits: int | None = None,
     ) -> F5TTS:
-        path = fetch_from_hub(
-            hf_model_name_or_path, quantization_bits=quantization_bits
-        )
+        path = fetch_from_hub(hf_model_name_or_path, quantization_bits=quantization_bits)
 
         if path is None:
             raise ValueError(f"Could not find model {hf_model_name_or_path}")
@@ -451,9 +447,9 @@ class F5TTS(nn.Module):
 
         # model
 
-        model_filename = "model.safetensors"
+        model_filename = "model_v1.safetensors"
         if exists(quantization_bits):
-            model_filename = f"model_{quantization_bits}b.safetensors"
+            model_filename = f"model_v1_{quantization_bits}b.safetensors"
 
         model_path = path / model_filename
 
@@ -466,6 +462,7 @@ class F5TTS(nn.Module):
                 text_dim=512,
                 conv_layers=4,
                 text_num_embeds=len(vocab) - 1,
+                text_mask_padding=True,
             ),
             vocab_char_map=vocab,
             vocoder=vocos.decode,
@@ -511,9 +508,7 @@ class F5TTS(nn.Module):
             nn.quantize(
                 f5tts,
                 bits=quantization_bits,
-                class_predicate=lambda p, m: (
-                    isinstance(m, nn.Linear) and m.weight.shape[1] % 64 == 0
-                ),
+                class_predicate=lambda p, m: (isinstance(m, nn.Linear) and m.weight.shape[1] % 64 == 0),
             )
 
         f5tts.load_weights(list(weights.items()))

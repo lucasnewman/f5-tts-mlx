@@ -114,7 +114,7 @@ class DurationTransformer(nn.Module):
         if text_dim is None:
             text_dim = mel_dim
         self.text_embed = TextEmbedding(
-            text_num_embeds, text_dim, conv_layers=conv_layers
+            text_num_embeds, text_dim, mask_padding=False, conv_layers=conv_layers
         )
         self.input_embed = DurationInputEmbedding(mel_dim, text_dim, dim)
 

@@ -13,7 +13,7 @@ import math
 import mlx.core as mx
 import mlx.nn as nn
 
-from einops.array_api import repeat
+from einops.array_api import repeat, rearrange
 
 from f5_tts_mlx.convnext_v2 import ConvNeXtV2Block
 from f5_tts_mlx.rope import (
@@ -74,9 +74,7 @@ class TimestepEmbedding(nn.Module):
     def __init__(self, dim, freq_embed_dim=256):
         super().__init__()
         self.time_embed = SinusPositionEmbedding(freq_embed_dim)
-        self.time_mlp = nn.Sequential(
-            nn.Linear(freq_embed_dim, dim), nn.SiLU(), nn.Linear(dim, dim)
-        )
+        self.time_mlp = nn.Sequential(nn.Linear(freq_embed_dim, dim), nn.SiLU(), nn.Linear(dim, dim))
 
     def __call__(self, timestep: mx.array) -> mx.array:
         time_hidden = self.time_embed(timestep)
@@ -88,18 +86,14 @@ class TimestepEmbedding(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(
-        self, dim, dim_out=None, mult=4, dropout=0.0, approximate: str = "none"
-    ):
+    def __init__(self, dim, dim_out=None, mult=4, dropout=0.0, approximate: str = "none"):
         super().__init__()
         inner_dim = int(dim * mult)
         dim_out = dim_out if dim_out is not None else dim
 
         activation = nn.GELU(approx=approximate)
         project_in = nn.Sequential(nn.Linear(dim, inner_dim), activation)
-        self.ff = nn.Sequential(
-            project_in, nn.Dropout(dropout), nn.Linear(inner_dim, dim_out)
-        )
+        self.ff = nn.Sequential(project_in, nn.Dropout(dropout), nn.Linear(inner_dim, dim_out))
 
     def __call__(self, x: mx.array) -> mx.array:
         return self.ff(x)
@@ -143,6 +137,11 @@ class Attention(nn.Module):
         key = self.to_k(x)
         value = self.to_v(x)
 
+        # attention
+        query = query.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
+        key = key.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
+        value = value.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
+
         # apply rotary position embedding
         if rope is not None:
             freqs, xpos_scale = rope
@@ -158,20 +157,13 @@ class Attention(nn.Module):
             query = apply_rotary_pos_emb(query, freqs, q_xpos_scale)
             key = apply_rotary_pos_emb(key, freqs, k_xpos_scale)
 
-        # attention
-        query = query.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
-        key = key.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
-        value = value.reshape(batch, seq_len, self.heads, -1).transpose(0, 2, 1, 3)
-
         # mask. e.g. inference got a batch with different target durations, mask out the padding
         if mask is not None:
             attn_mask = mask[:, None, None, :].expand(batch, self.heads, 1, seq_len)
         else:
             attn_mask = None
 
-        x = mx.fast.scaled_dot_product_attention(
-            q=query, k=key, v=value, scale=self._scale_factor, mask=attn_mask
-        )
+        x = mx.fast.scaled_dot_product_attention(q=query, k=key, v=value, scale=self._scale_factor, mask=attn_mask)
         x = x.transpose(0, 2, 1, 3).reshape(batch, seq_len, -1).astype(query.dtype)
 
         # linear proj
@@ -187,22 +179,17 @@ class Attention(nn.Module):
 
 
 class TextEmbedding(nn.Module):
-    def __init__(self, text_num_embeds, text_dim, conv_layers=0, conv_mult=2):
+    def __init__(self, text_num_embeds, text_dim, mask_padding=True, conv_layers=0, conv_mult=2):
         super().__init__()
-        self.text_embed = nn.Embedding(
-            text_num_embeds + 1, text_dim
-        )  # use 0 as filler token
+        self.text_embed = nn.Embedding(text_num_embeds + 1, text_dim)  # use 0 as filler token
+
+        self.mask_padding = mask_padding  # mask filler and batch padding tokens or not
 
         if conv_layers > 0:
             self.extra_modeling = True
             self.precompute_max_pos = 4096  # ~44s of 24khz audio
             self._freqs_cis = precompute_freqs_cis(text_dim, self.precompute_max_pos)
-            self.text_blocks = nn.Sequential(
-                *[
-                    ConvNeXtV2Block(text_dim, text_dim * conv_mult)
-                    for _ in range(conv_layers)
-                ]
-            )
+            self.text_blocks = nn.Sequential(*[ConvNeXtV2Block(text_dim, text_dim * conv_mult) for _ in range(conv_layers)])
         else:
             self.extra_modeling = False
 
@@ -216,6 +203,8 @@ class TextEmbedding(nn.Module):
         text = text[:, :seq_len]
 
         text = mx.pad(text, [(0, 0), (0, seq_len - text_len)], constant_values=0)
+        if self.mask_padding:
+            text_mask = rearrange(text == 0, "b n -> b n 1")
 
         # cfg for text
         text = mx.where(drop_text, mx.zeros_like(text), text)
@@ -224,14 +213,18 @@ class TextEmbedding(nn.Module):
         if self.extra_modeling:
             # sinus pos emb
             batch_start = mx.zeros((batch,), dtype=mx.int32)
-            pos_idx = get_pos_embed_indices(
-                batch_start, seq_len, max_pos=self.precompute_max_pos
-            )
+            pos_idx = get_pos_embed_indices(batch_start, seq_len, max_pos=self.precompute_max_pos)
             text_pos_embed = self._freqs_cis[pos_idx]
             text = text + text_pos_embed
 
             # convnext v2 blocks
-            text = self.text_blocks(text)
+            if self.mask_padding:
+                text = mx.where(text_mask, mx.zeros_like(text), text)
+                for block in self.text_blocks.layers:
+                    text = block(text)
+                    text = mx.where(text_mask, mx.zeros_like(text), text)
+            else:
+                text = self.text_blocks(text)
 
         return text
 
@@ -272,13 +265,9 @@ class AdaLayerNormZero(nn.Module):
 
     def __call__(self, x: mx.array, emb: mx.array | None = None) -> mx.array:
         emb = self.linear(self.silu(emb))
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mx.split(
-            emb, 6, axis=1
-        )
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mx.split(emb, 6, axis=1)
 
-        x = self.norm(x) * (1 + mx.expand_dims(scale_msa, axis=1)) + mx.expand_dims(
-            shift_msa, axis=1
-        )
+        x = self.norm(x) * (1 + mx.expand_dims(scale_msa, axis=1)) + mx.expand_dims(shift_msa, axis=1)
         return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
 
 
@@ -297,9 +286,7 @@ class AdaLayerNormZero_Final(nn.Module):
         emb = self.linear(self.silu(emb))
         scale, shift = mx.split(emb, 2, axis=1)
 
-        x = self.norm(x) * (1 + mx.expand_dims(scale, axis=1)) + mx.expand_dims(
-            shift, axis=1
-        )
+        x = self.norm(x) * (1 + mx.expand_dims(scale, axis=1)) + mx.expand_dims(shift, axis=1)
         return x
 
 
@@ -319,13 +306,9 @@ class DiTBlock(nn.Module):
         )
 
         self.ff_norm = nn.LayerNorm(dim, affine=False, eps=1e-6)
-        self.ff = FeedForward(
-            dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh"
-        )
+        self.ff = FeedForward(dim=dim, mult=ff_mult, dropout=dropout, approximate="tanh")
 
-    def __call__(
-        self, x, t, mask=None, rope=None
-    ):  # x: noised input, t: time embedding
+    def __call__(self, x, t, mask=None, rope=None):  # x: noised input, t: time embedding
         # pre-norm & modulation for attention input
         norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
 
@@ -335,9 +318,7 @@ class DiTBlock(nn.Module):
         # process attention output for input x
         x = x + mx.expand_dims(gate_msa, axis=1) * attn_output
 
-        norm = self.ff_norm(x) * (
-            1 + mx.expand_dims(scale_mlp, axis=1)
-        ) + mx.expand_dims(shift_mlp, axis=1)
+        norm = self.ff_norm(x) * (1 + mx.expand_dims(scale_mlp, axis=1)) + mx.expand_dims(shift_mlp, axis=1)
         ff_output = self.ff(norm)
         x = x + mx.expand_dims(gate_mlp, axis=1) * ff_output
 
@@ -360,6 +341,7 @@ class DiT(nn.Module):
         mel_dim=100,
         text_num_embeds=256,
         text_dim=None,
+        text_mask_padding=True,
         conv_layers=0,
     ):
         super().__init__()
@@ -368,9 +350,7 @@ class DiT(nn.Module):
             text_dim = mel_dim
 
         self.time_embed = TimestepEmbedding(dim)
-        self.text_embed = TextEmbedding(
-            text_num_embeds, text_dim, conv_layers=conv_layers
-        )
+        self.text_embed = TextEmbedding(text_num_embeds, text_dim, mask_padding=text_mask_padding, conv_layers=conv_layers)
         self.input_embed = InputEmbedding(mel_dim, text_dim, dim)
         self.rotary_embed = RotaryEmbedding(dim_head)
 
