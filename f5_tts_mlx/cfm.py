@@ -405,7 +405,7 @@ class F5TTS(nn.Module):
     def from_pretrained(
         cls,
         hf_model_name_or_path: str,
-        convert_weights=True,
+        convert_weights=None,
         quantization_bits: int | None = None,
     ) -> F5TTS:
         path = fetch_from_hub(hf_model_name_or_path, quantization_bits=quantization_bits)
@@ -450,6 +450,9 @@ class F5TTS(nn.Module):
         model_filename = "model_v1.safetensors"
         if exists(quantization_bits):
             model_filename = f"model_v1_{quantization_bits}b.safetensors"
+            convert_weights = False
+        else:
+            convert_weights = default(convert_weights, True)
 
         model_path = path / model_filename
 
